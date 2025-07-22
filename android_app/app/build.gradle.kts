@@ -18,6 +18,15 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // =========================================================================
+        // [最终修正]: 将 ABI/CPU架构的配置移至标准的 android.defaultConfig.ndk 块中。
+        // 这是最可靠的配置方式，可以解决 `Unresolved reference: abiFilters` 错误。
+        // Chaquopy 插件会自动识别并使用这里的配置。
+        // =========================================================================
+        ndk {
+            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86"))
+        }
     }
 
     buildTypes {
@@ -36,53 +45,40 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
-    // 启用 View Binding
     buildFeatures {
         viewBinding = true
     }
 }
 
 // ===================================================================
-// ==================== Chaquopy 配置块 (已修正) =====================
+// ==================== Chaquopy 配置块 ==============================
 // ===================================================================
 chaquopy {
-    // 指定 Python 源码目录
     sourceSets {
         getByName("main") {
             srcDirs("src/main/python")
         }
     }
 
-    // Chaquopy 的默认配置
     defaultConfig {
-        // [关键修正]: 所有这些配置项都必须位于 defaultConfig 内部
-
-        // (必需) 指定要打包到 APP 中的 Python 版本。
+        // (必需) Python 版本等其他配置保留在此处。
         version = "3.11.5"
-
-        // (必需) 告诉 Chaquopy 在构建时使用哪个 Python 可执行文件。
-        // 可以是 "python", "python3", "py", 或一个绝对路径。
         buildPython("python")
 
-        // (可选) 指定 Python 依赖包。
         pip {
             install("Flask")
             install("PyYAML")
             install("requests")
         }
-
-        // (可选) 指定需要支持的 CPU 架构 (ABI)。
-        // 这行代码之前在错误的位置，现在已经移到 defaultConfig 内部。
-        abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86"))
+        
+        // [最终修正] 已将 abiFilters 配置移至上面的 android.defaultConfig.ndk 块中。
     }
 }
-
 
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.11.0")
-    // 如果您在 activity_main.xml 中使用了 ConstraintLayout，请确保添加此依赖
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
