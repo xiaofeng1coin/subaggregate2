@@ -19,11 +19,7 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // =========================================================================
-        // [最终修正]: 将 ABI/CPU架构的配置移至标准的 android.defaultConfig.ndk 块中。
-        // 这是最可靠的配置方式，可以解决 `Unresolved reference: abiFilters` 错误。
-        // Chaquopy 插件会自动识别并使用这里的配置。
-        // =========================================================================
+        // ABI/CPU架构的配置，此位置正确，无需改动
         ndk {
             abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86"))
         }
@@ -51,7 +47,7 @@ android {
 }
 
 // ===================================================================
-// ==================== Chaquopy 配置块 ==============================
+// ==================== Chaquopy 配置块 (已修正) =====================
 // ===================================================================
 chaquopy {
     sourceSets {
@@ -61,8 +57,10 @@ chaquopy {
     }
 
     defaultConfig {
-        // (必需) Python 版本等其他配置保留在此处。
-        version = "3.11.5"
+        // [最终修正]: 将 Python 版本号从 "3.11.5" 改为 "3.11"。
+        // Chaquopy 要求使用 "major.minor" 格式。
+        version = "3.11"
+        
         buildPython("python")
 
         pip {
@@ -70,8 +68,6 @@ chaquopy {
             install("PyYAML")
             install("requests")
         }
-        
-        // [最终修正] 已将 abiFilters 配置移至上面的 android.defaultConfig.ndk 块中。
     }
 }
 
