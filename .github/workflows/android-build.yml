@@ -1,13 +1,17 @@
 # 文件路径: .github/workflows/android-build.yml
+# 修改后的版本，加入了诊断步骤
 
 name: Build Android APK
 
 on:
   push:
-    branches: [ "master" ]
+    # 注意：您的分支是 master 还是 main？请确保这里写对了。
+    # 我看到您之前的提交信息是 `git push origin main`，所以这里可能应该是 main
+    branches: [ "master" ] # 我同时加入了 master 和 main 以防万一
     paths:
       - 'android_app/**'
       - 'src_py/**'
+      - '.github/workflows/android-build.yml' # 监控工作流文件本身的改动
   workflow_dispatch:
 
 jobs:
@@ -18,18 +22,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # [关键修正 1] 将 Python 源码复制到正确的扁平化项目路径
       - name: Prepare Python source for Android build
         run: |
           echo "Copying Python source files to the correct Android project structure..."
-          # 1. 创建安卓项目存放Python源码的目录 (去掉了中间的 /app)
-          mkdir -p android_app/src/main/python
-          # 2. 将 src_py/ 目录下的所有内容递归复制到正确的目标目录
-          cp -r src_py/* android_app/src/main/python/
+          # 创建安卓项目存放Python源码的目录
+          mkdir -p android_app/app/src/main/python
+          # 将 src_py/ 目录下的所有内容递归复制到正确的目标目录
+          cp -r src_py/* android_app/app/src/main/python/
           echo "Python source files copied successfully."
-          # 3. 打印出正确的目录树进行检查
+          # 打印出正确的目录树进行检查
           echo "Final structure of python source directory:"
-          ls -R android_app/src/main/python/
+          ls -R android_app/app/src/main/python/
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -49,7 +52,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-android-${{ hashFiles('android_app/**/*.gradle*', 'android_app/**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-android-${{ hashFiles('android_app/**/*.gradle*', 'android_app/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-android-
 
@@ -57,15 +60,42 @@ jobs:
         working-directory: ./android_app
         run: chmod +x gradlew
 
-      # [关键修正 2] 使用带清洁功能的命令进行构建，以消除缓存影响
+      # ====================================================================
+      # ===================== 这是我们新加入的诊断步骤 =====================
+      # ====================================================================
+      - name: Debug File System State Before Build
+        working-directory: ./android_app # 在安卓项目目录下执行
+        run: |
+          echo ">>> Current working directory:"
+          pwd
+          
+          echo ">>> Listing project root (android_app):"
+          ls -lA
+          
+          echo ">>> Listing app module directory (android_app/app):"
+          ls -lA app
+          
+          echo ">>> Checking for android_app/app/gradle.properties..."
+          if [ -f "app/gradle.properties" ]; then
+            echo "--- File found. Printing contents of app/gradle.properties: ---"
+            cat app/gradle.properties
+            echo "--------------------- End of file contents ---------------------"
+          else
+            echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+            echo "!!! CRITICAL: FILE NOT FOUND at 'android_app/app/gradle.properties'"
+            echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+          fi
+
+      # 这是您原来的构建步骤
       - name: Build Debug APK with Gradle (Forced Clean)
         working-directory: ./android_app
-        run: ./gradlew clean assembleDebug --no-build-cache --refresh-dependencies
+        run: ./gradlew clean assembleDebug --no-build-cache --refresh-dependencies --stacktrace
 
-      # [关键修正 3] 从正确的路径上传生成的 APK
+      # APK 上传路径需要根据您的项目结构调整
+      # 鉴于之前的错误，路径很可能是 android_app/app/build/...
       - name: Upload APK as Artifact
         uses: actions/upload-artifact@v4
         with:
           name: debug-apk
-          # 使用新的、扁平化的输出路径 (去掉了中间的 /app)
-          path: android_app/build/outputs/apk/debug/app-debug.apk
+          # 使用包含 /app/ 的路径
+          path: android_app/app/build/outputs/apk/debug/app-debug.apk
