@@ -4,7 +4,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "master" ]
     # 当安卓项目外壳或唯一的Python源码发生变化时，都触发此工作流
     paths:
       - 'android_app/**'
