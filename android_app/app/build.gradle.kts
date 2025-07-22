@@ -20,30 +20,23 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // [关键添加] Chaquopy 的配置块
+        // ndk 配置块是 defaultConfig 的一部分，这没有错
         ndk {
-            // 指定要为哪些 CPU 架构构建 Python 环境。这些是最常用的。
+            // 指定要为哪些 CPU 架构构建 Python 环境
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
         }
-        chaquopy {
-            // Chaquopy 需要知道 Python 源码的位置。
-            // GitHub Actions 会在构建前将 src_py/* 复制到这里。
-            // 这是“图纸”上的一个关键指令，告诉构建系统去哪里找 python 代码。
-            sourceSets {
-                getByName("main") {
-                    srcDirs("src/main/python")
-                }
-            }
-            // 指定要使用的 Python 版本。
-            // 务必与 GitHub Actions (android-build.yml) 中 setup-python 的版本一致。
-            version = "3.11"
-            // 在这里指定你的 Python 依赖 (这些会随 APK 一起打包)
-            // 内容应与根目录的 requirements.txt 保持一致
-            pip {
-                install("Flask")
-                install("PyYAML")
-                install("requests")
-            }
+    } // <-- defaultConfig 的大括号在这里结束
+
+    // [关键修正] chaquopy 配置块必须和 defaultConfig 是同级兄弟，不能放在其内部
+    chaquopy {
+        // 指定 Python 版本，务必与 GitHub Actions 中 setup-python 的版本一致
+        version = "3.11"
+        
+        // 在这里指定你的 Python 依赖 (这些会随 APK 一起打包)
+        pip {
+            install("Flask")
+            install("PyYAML")
+            install("requests")
         }
     }
 
@@ -56,16 +49,30 @@ android {
             )
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
+
     kotlinOptions {
         jvmTarget = "1.8"
     }
+
     // [可选但推荐] 允许在 Kotlin 代码中更方便地访问布局视图
     buildFeatures {
         viewBinding = true
+    }
+
+    // [关键] Chaquopy 需要知道 Python 源码的位置。
+    // 这个配置块也必须是 android 的直接子级。
+    sourceSets {
+        getByName("main") {
+            python {
+                // GitHub Actions 会在构建前将 src_py/* 复制到这里
+                srcDir("src/main/python")
+            }
+        }
     }
 }
 
