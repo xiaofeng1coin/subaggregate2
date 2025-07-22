@@ -5,11 +5,9 @@ name: Build Android APK
 on:
   push:
     branches: [ "master" ]
-    # 当安卓项目外壳或唯一的Python源码发生变化时，都触发此工作流
     paths:
       - 'android_app/**'
       - 'src_py/**'
-  # 同样允许手动触发
   workflow_dispatch:
 
 jobs:
@@ -20,18 +18,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # [核心步骤] 在编译前，准备好安卓项目的 Python 源代码
+      # [关键修正 1] 将 Python 源码复制到正确的扁平化项目路径
       - name: Prepare Python source for Android build
         run: |
-          echo "Copying Python source files to the Android project structure..."
-          # 1. 创建安卓项目存放Python源码的目录 (使用 -p 确保如果目录已存在也不会报错)
-          mkdir -p android_app/app/src/main/python
-          # 2. 将 src_py/ 目录下的所有内容递归复制到目标目录
-          cp -r src_py/* android_app/app/src/main/python/
+          echo "Copying Python source files to the correct Android project structure..."
+          # 1. 创建安卓项目存放Python源码的目录 (去掉了中间的 /app)
+          mkdir -p android_app/src/main/python
+          # 2. 将 src_py/ 目录下的所有内容递归复制到正确的目标目录
+          cp -r src_py/* android_app/src/main/python/
           echo "Python source files copied successfully."
-          # 3. (可选) 打印出复制后的目录树，方便在Actions日志中调试检查
+          # 3. 打印出正确的目录树进行检查
           echo "Final structure of python source directory:"
-          ls -R android_app/app/src/main/python/
+          ls -R android_app/src/main/python/
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -42,8 +40,9 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # 确保此版本与 build.gradle.kts 中配置的一致
+          python-version: '3.11'
 
+      # 缓存可以保留，但我们会在构建时强制刷新
       - name: Cache Gradle dependencies
         uses: actions/cache@v4
         with:
@@ -58,12 +57,15 @@ jobs:
         working-directory: ./android_app
         run: chmod +x gradlew
 
-      - name: Build Debug APK with Gradle
+      # [关键修正 2] 使用带清洁功能的命令进行构建，以消除缓存影响
+      - name: Build Debug APK with Gradle (Forced Clean)
         working-directory: ./android_app
-        run: ./gradlew assembleDebug
+        run: ./gradlew clean assembleDebug --no-build-cache --refresh-dependencies
 
+      # [关键修正 3] 从正确的路径上传生成的 APK
       - name: Upload APK as Artifact
         uses: actions/upload-artifact@v4
         with:
           name: debug-apk
-          path: android_app/app/build/outputs/apk/debug/app-debug.apk
+          # 使用新的、扁平化的输出路径 (去掉了中间的 /app)
+          path: android_app/build/outputs/apk/debug/app-debug.apk
