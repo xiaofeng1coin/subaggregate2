@@ -82,16 +82,22 @@ jobs:
           # 执行构建命令
           ./gradlew assemble${BUILD_TYPE} ${GRADLE_PARAMS} --stacktrace
 
-          # 查找APK路径的逻辑保持不变
+          # 查找APK路径的逻辑
           APK_FOLDER_NAME=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
-          apk_path=$(find ./app/build/outputs/apk/${APK_FOLDER_NAME} -name "*.apk" -print -quit)
+          
+          # === 这里是唯一的修改，用于修复路径错误 ===
+          # 1. 查找路径
+          raw_apk_path=$(find ./app/build/outputs/apk/${APK_FOLDER_NAME} -name "*.apk" -print -quit)
+          # 2. 清理路径，移除开头的 './'
+          apk_path=$(echo "$raw_apk_path" | sed 's|^\./||')
+          # ==========================================
+
           if [[ -z "$apk_path" ]]; then echo "::error::APK not found!"; exit 1; fi
           
           # 输出结果供后续步骤使用
           echo "APK_PATH=$apk_path" >> "$GITHUB_OUTPUT"
           echo "BUILD_TYPE=$BUILD_TYPE" >> "$GITHUB_OUTPUT"
         
-      # === 新增步骤：上传构建产物（Artifacts）===
       - name: 9. Upload APK as Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -100,7 +106,6 @@ jobs:
           path: android_app/${{ steps.build_apk.outputs.APK_PATH }}
           retention-days: 7 # 设置产物保留7天
 
-      # === 现在的步骤10：发布逻辑不变 ===
       - name: 10. 自动版本管理和发布
         if: env.IS_RELEASE_COMMIT == 'true' # 使用我们预设的环境变量，更清晰
         env:
