@@ -58,8 +58,10 @@ jobs:
       # =========================================================================
       # ==                 [！！！新增的调试步骤！！！]                  ==
       # =========================================================================
+# =========================================================================
+      # ==                 [！！！已修改的诊断步骤！！！]                  ==
+      # =========================================================================
       - name: 6. [DEBUG] Show Git and Commitizen Status BEFORE Bump
-        # 只在尝试进行Release时运行此诊断
         if: steps.check_commit.outputs.IS_FIX_COMMIT == 'true'
         run: |
           echo "==================== GIT STATUS ===================="
@@ -67,38 +69,31 @@ jobs:
           echo "-------------------- Git Tags --------------------"
           git tag -l | cat
           echo "----------------- Recent Git Log -----------------"
-          # 显示最近10条提交，帮助我们看到触发工作流的 commit
           git log --graph --oneline -n 10
           echo "============= COMMITIZEN CHECK ============="
           echo "Checking if the LATEST commit is bumpable..."
-          # 使用 `cz check` 明确地检查从倒数第二个commit到最新的commit之间的范围
-          # `|| true` 确保即使检查失败，工作流也不会在这里停止
-          cz check --rev-range $(git log -n 2 --pretty=format:"%H" | tail -n 1)..HEAD || true
+          # [关键修改] 添加 --no-raise 来忽略非致命格式错误
+          cz check --rev-range $(git log -n 2 --pretty=format:"%H" | tail -n 1)..HEAD --no-raise "cz.exceptions.CzException" || true
           echo "=============================================="
-
+ 
       - name: 7. [RELEASE ONLY] Bump Version & Get Changelog
         if: steps.check_commit.outputs.IS_FIX_COMMIT == 'true'
         id: cz_bump
         run: |
           echo "Attempting to bump version..."
-          # [关键修改] 使用 --changelog 参数，并捕获错误
-          # cz bump 会自动更新 CHANGELOG.md, 这是由 pyproject.toml 中的配置决定的
-          if ! cz bump --yes --changelog; then
+          # [关键修改] 使用 --changelog 和 --no-raise 参数来忽略非致命格式错误
+          # 即使 commit message 格式稍有不规范（如缺少空格），它也会尝试 bump
+          if ! cz bump --yes --changelog --no-raise "cz.exceptions.CzException"; then
             echo "::error::'cz bump' failed. This likely means no bumpable commits were found between the last tag and HEAD. Please check the logs from the previous debug step."
             exit 1
           fi
-
-          # `cz bump` 成功后，版本号已经更新，我们可以直接获取
+ 
           new_version=$(cz version --project)
           echo "✅ Version bumped successfully to: ${new_version}"
-
-          # [关键修改] 提取本次更新的Changelog内容以用于Release
-          # 我们从CHANGELOG.md中提取最新版本的内容
-          # 这个awk命令会打印从新版本号那一行开始，到下一个版本号之前的所有内容
+ 
           changelog_body=$(awk -v ver="## v${new_version}" '/^## v/{if(p)exit; if($0 ~ ver)p=1} p' CHANGELOG.md)
-
+ 
           echo "version=${new_version}" >> $GITHUB_OUTPUT
-          # 使用多行字符串语法来安全地处理changelog
           echo "changelog<<EOF" >> $GITHUB_OUTPUT
           echo "${changelog_body}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
