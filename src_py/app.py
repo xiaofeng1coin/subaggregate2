@@ -1,4 +1,4 @@
-# 文件名: app.py (已添加移动端路由分发，并保持原始格式)
+# 文件名: app.py (已添加内置日志查看面板，完整版)
 
 import os
 import json
@@ -7,17 +7,37 @@ import base64
 import yaml
 import binascii
 import time
+import io  # <-- [新增] 用于在内存中捕获日志
 from urllib.parse import urlparse, parse_qs, unquote
 from flask import Flask, request, jsonify, make_response, render_template
+from markupsafe import escape  # <-- [新增] 用于安全地显示日志到网页
 import requests
 
 # --- 基础设置 ---
 app = Flask(__name__, static_folder='static', template_folder='templates')
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)-7s | %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+
+# --- [修改处 1: 替换日志系统以捕获所有日志] ---
+# 创建一个在内存中读写的 "文件"
+log_capture_string = io.StringIO()
+# 获取Python日志记录器的根节点
+root_logger = logging.getLogger()
+# 设置日志记录的最低级别为INFO (这是所有日志都会被记录的保证)
+root_logger.setLevel(logging.INFO)
+
+# 创建一个处理器，它会将日志写入到我们内存中的 "文件"
+log_handler = logging.StreamHandler(log_capture_string)
+# 定义日志的格式
+formatter = logging.Formatter('%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+log_handler.setFormatter(formatter)
+# 将这个新的处理器添加到日志记录器中
+root_logger.addHandler(log_handler)
+
+# 同时，为了兼容Docker等环境，我们仍然保留向控制台输出日志的功能
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+root_logger.addHandler(console_handler)
+# --- [修改处 1 结束] ---
+
 
 # --- [必要修改 1: 环境判断与路径动态设置] ---
 # 通过检查 Chaquopy 特有的环境变量，判断是否在安卓环境中运行
@@ -39,6 +59,15 @@ else:
     current_script_dir = os.path.dirname(os.path.abspath(__file__))
     DATA_FILE = os.path.join(current_script_dir, 'data.json')
     CLASH_TEMPLATE_FILE = os.path.join(current_script_dir, 'clash_template.yaml')
+
+
+# --- [新增处 2: 启动时打印关键诊断信息] ---
+logging.info("=" * 50)
+logging.info(f"DIAGNOSTIC: Environment detected: {'Android' if IN_ANDROID else 'Docker/Local'}")
+logging.info(f"DIAGNOSTIC: DATA_FILE path is set to -----> {DATA_FILE}")
+logging.info(f"DIAGNOSTIC: CLASH_TEMPLATE_FILE path is set to -----> {CLASH_TEMPLATE_FILE}")
+logging.info("=" * 50)
+# --- [新增处 2 结束] ---
 
 
 # =================================================================================
@@ -196,20 +225,40 @@ def generate_clash_config(proxies: list, template_content: str) -> str:
 # =================================================================================
 
 def load_data():
+    # --- [修改处 3: 为load_data增加详细诊断日志] ---
+    logging.info(f"DIAGNOSTIC: Attempting to LOAD data from {DATA_FILE}")
     if not os.path.exists(DATA_FILE):
+        logging.warning(f"DIAGNOSTIC: File not found at {DATA_FILE}. Returning empty default data.")
         return {"subscriptions": [], "aggregation_enabled": [], "global_filter_enabled": False,
                 "global_filter_keywords": ""}
     try:
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
+            data = json.load(f)
+            logging.info(f"DIAGNOSTIC: Successfully LOADED data. Subscription count: {len(data.get('subscriptions',[]))}")
+            return data
+    except Exception as e:
+        logging.error(f"DIAGNOSTIC: !!! FAILED to LOAD or PARSE data from {DATA_FILE}: {e}", exc_info=True)
         return {"subscriptions": [], "aggregation_enabled": [], "global_filter_enabled": False,
                 "global_filter_keywords": ""}
+    # --- [修改处 3 结束] ---
 
 
 def save_data(data):
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    # --- [修改处 4: 为save_data增加详细诊断日志] ---
+    logging.info(f"DIAGNOSTIC: Attempting to SAVE data to {DATA_FILE}")
+    try:
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        logging.info(f"DIAGNOSTIC: Successfully SAVED data. File should now exist at {DATA_FILE}")
+        # 立即验证文件是否真的存在
+        if os.path.exists(DATA_FILE):
+            logging.info(f"DIAGNOSTIC: VERIFIED - File exists after save.")
+        else:
+            logging.error(f"DIAGNOSTIC: !!! CRITICAL FAILURE - File DOES NOT exist after supposedly successful save!")
+    except Exception as e:
+        logging.error(f"DIAGNOSTIC: !!! FAILED to SAVE data to {DATA_FILE}: {e}", exc_info=True)
+    # --- [修改处 4 结束] ---
+
 
 
 def apply_filter(nodes, keywords_str, filter_type):
@@ -244,23 +293,37 @@ def apply_filter(nodes, keywords_str, filter_type):
 # 主路由和聚合逻辑
 # =================================================================================
 
-# ---------- [唯一修改处开始] ----------
+# ---------- [修改处 5: 注入悬浮调试链接到主页] ----------
 @app.route('/')
 def index():
     user_agent = request.headers.get('User-Agent', '').lower()
     mobile_keywords = ['mobi', 'android', 'iphone', 'ipod', 'ipad', 'windows phone', 'blackberry']
 
-    # 如果User-Agent包含任何移动设备关键词，则渲染全新的mobile.html
-    if any(keyword in user_agent for keyword in mobile_keywords):
-        logging.info("检测到移动端设备，渲染 mobile.html")
-        return render_template('mobile.html')
+    # 判断应该渲染哪个模板
+    template_name = 'mobile.html' if any(keyword in user_agent for keyword in mobile_keywords) else 'index.html'
+    logging.info(f"检测到 {'移动端' if 'mobile' in template_name else '桌面端'} 设备，渲染 {template_name}")
+    
+    # 先渲染原始的HTML内容
+    try:
+        original_html = render_template(template_name)
+    except Exception as e:
+        logging.error(f"模板文件 '{template_name}' 渲染失败: {e}", exc_info=True)
+        return f"<h1>Error</h1><p>Template file '{template_name}' could not be rendered. Check logs.</p>", 500
 
-    # 否则，渲染原有的桌面版index.html
-    logging.info("检测到桌面端设备，渲染 index.html")
-    return render_template('index.html')
-
-
-# ---------- [唯一修改处结束] ----------
+    # 创建并注入一个悬浮的调试链接
+    # 这个链接会一直显示在页面的右下角
+    debug_link_html = '''
+    <div style="position: fixed; bottom: 10px; right: 10px; padding: 8px 12px; background-color: yellow; color: black; border: 1px solid black; border-radius: 5px; z-index: 9999; font-family: sans-serif; font-size: 14px;">
+        <a href="/debuglog" target="_blank" style="color: black; text-decoration: none;">查看调试日志</a>
+    </div>
+    </body>
+    '''
+    # 将链接附加到原始HTML的</body>标签之前，更稳妥
+    if '</body>' in original_html:
+        return original_html.replace('</body>', debug_link_html + '</html>', 1)
+    else:
+        return original_html + debug_link_html
+# ---------- [修改处 5 结束] ----------
 
 
 @app.route('/aggregate/clash.yaml')
@@ -461,6 +524,35 @@ def save_global_filter():
     data['global_filter_keywords'] = req_data.get('keywords', '')
     save_data(data)
     return jsonify({"message": "全局设置已保存"})
+
+
+# --- [新增处 6: 新增日志查看路由] ---
+@app.route('/debuglog')
+def debug_log():
+    # 清空并刷新按钮
+    clear_button = '''
+    <div style="position: fixed; top: 10px; right: 10px;">
+        <form method="POST" action="/debuglog/clear">
+            <button type="submit">清空日志</button>
+        </form>
+        <button onclick="location.reload()">刷新</button>
+    </div>
+    '''
+    # 获取内存中捕获的所有日志内容
+    log_contents = log_capture_string.getvalue()
+    # 将日志内容以纯文本形式返回，并用<pre>标签包裹以保持格式
+    # 使用 escape() 来防止日志中的特殊字符被浏览器误解为HTML标签
+    return f"<html><body>{clear_button}<pre>{escape(log_contents)}</pre></body></html>"
+
+@app.route('/debuglog/clear', methods=['POST'])
+def clear_debug_log():
+    # 清空内存中的日志缓存
+    log_capture_string.truncate(0)
+    log_capture_string.seek(0)
+    logging.info("DIAGNOSTIC: Log has been manually cleared.")
+    # 重定向回日志页面
+    return '<script>window.location.href="/debuglog";</script>'
+# --- [新增处 6 结束] ---
 
 
 # --- [必要修改 2: 启动逻辑分离，以兼容不同环境] ---
