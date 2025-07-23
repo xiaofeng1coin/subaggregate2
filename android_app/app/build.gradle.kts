@@ -14,12 +14,14 @@ android {
         applicationId = "com.example.subaggregator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        
+        // [关键修改] versionCode 必须是整数，每次发布都要增加。
+        versionCode = 2 
+        // [关键修改] versionName 是显示给用户的，我们把它更新为三段式。
+        versionName = "1.0.1" 
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        // ABI/CPU架构的配置，此位置正确，无需改动
+        
         ndk {
             abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86"))
         }
@@ -46,23 +48,15 @@ android {
     }
 }
 
-// ===================================================================
-// ==================== Chaquopy 配置块 (已修正) =====================
-// ===================================================================
 chaquopy {
     sourceSets {
         getByName("main") {
             srcDirs("src/main/python")
         }
     }
-
     defaultConfig {
-        // [最终修正]: 将 Python 版本号从 "3.11.5" 改为 "3.11"。
-        // Chaquopy 要求使用 "major.minor" 格式。
         version = "3.11"
-        
         buildPython("python")
-
         pip {
             install("Flask")
             install("PyYAML")

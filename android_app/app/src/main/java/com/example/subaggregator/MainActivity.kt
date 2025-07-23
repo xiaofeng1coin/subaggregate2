@@ -29,7 +29,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     // [新增] 你的GitHub仓库API地址
-    private val GITHUB_API_URL = "https://api.github.com/repos/This-is-an-Apple/Sub-Aggregator-for-Android/releases/latest"
+    private val GITHUB_API_URL = "https://api.github.com/repos/xiaofeng1coin/subaggregate2/releases/latest"
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
