@@ -1,9 +1,8 @@
 # =================================================================
-# ==                   最终决战版 - 锁定并修复了所有问题              ==
+# ==              最终融合版 (Truly Final Version)               ==
 # =================================================================
-# 1. 确认 `pyproject.toml` 包含初始 version。
-# 2. [最新修复] 解决了 `git-auto-commit` 因 `CHANGELOG.md` 
-#    不存在而失败的问题。
+# 结合了自动版本管理，并采纳了您在旧工作流中已被验证的、
+# 强制创建 gradle.properties 文件的成功经验，以确保构建的绝对稳定。
 # =================================================================
 
 name: Automatic Build, Versioning, and Release
@@ -29,6 +28,7 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # --- 自动版本管理 ---
       - name: Bump version and write changelog
         id: cz
         uses: commitizen-tools/commitizen-action@master
@@ -41,27 +41,18 @@ jobs:
           VERSION="${{ steps.cz.outputs.version }}"
           VERSION_CODE=$(echo "$VERSION" | awk -F. '{print $1*10000 + $2*100 + $3}')
           GRADLE_FILE="android_app/app/build.gradle.kts"
-          
-          echo "New Version: $VERSION"
-          echo "New Version Code: $VERSION_CODE"
-          
           sed -i "s/versionCode = .*/versionCode = $VERSION_CODE/" $GRADLE_FILE
+          echo "Updated versionCode in $GRADLE_FILE to $VERSION_CODE"
 
-          echo "--- build.gradle.kts after update ---"
-          cat $GRADLE_FILE
-          echo "-------------------------------------"
-          
-      # [最终修正] 删除了 file_pattern 参数。
-      # 该 Action 现在会自动检测并提交所有已更改的文件。
-      # 无论 CHANGELOG.md 是否被更新，此步骤都能成功。
       - name: Commit all version changes
         if: steps.cz.outputs.version
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(release): bump version to ${{ steps.cz.outputs.version }}"
+          # 无需 file_pattern，自动提交所有变更
 
-      # === 后续安卓构建步骤（保持不变） ===
-
+      # --- 安卓构建步骤 ---
+      
       - name: Prepare Python source for Android build
         run: |
           PYTHON_SOURCE_DIR="src_py"
@@ -86,19 +77,31 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/build.gradle.kts') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/build.gradle.kts', '**/gradle-wrapper.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
+
+      # [采纳您的成功经验] 强制创建正确的 gradle.properties 文件，避免环境问题
+      - name: Force create correct gradle.properties
+        run: |
+          PROPERTIES_FILE="android_app/gradle.properties"
+          echo ">>> Forcibly creating $PROPERTIES_FILE to ensure build stability"
+          echo "android.useAndroidX=true" > $PROPERTIES_FILE
+          echo "android.enableJetifier=true" >> $PROPERTIES_FILE
+          echo ">>> Verification: Contents of $PROPERTIES_FILE:"
+          cat $PROPERTIES_FILE
 
       - name: Grant execute permission for gradlew
         working-directory: ./android_app
         run: chmod +x gradlew
 
       - name: Build Debug APK with Gradle
-        if: steps.cz.outputs.version 
+        if: steps.cz.outputs.version
         working-directory: ./android_app
         run: ./gradlew assembleDebug --stacktrace
         
+      # --- 发布步骤 ---
+
       - name: Rename APK for Release
         if: steps.cz.outputs.version
         id: rename_apk
