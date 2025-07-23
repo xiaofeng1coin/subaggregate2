@@ -63,13 +63,16 @@ jobs:
           echo "${CHANGELOG_BODY}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: 5. [仅发布] 更新 Gradle 文件中的版本
-        if: steps.bump_version.outputs.new_version
-        run: |
-          NEW_VERSION="${{ steps.bump_version.outputs.new_version }}"
-          sed -i "s/versionName = .*/versionName = \"$NEW_VERSION\"/" android_app/app/build.gradle.kts
-          VERSION_CODE=$(echo "$NEW_VERSION" | awk -F. '{print $1*10000 + $2*100 + $3}')
-          sed -i "s/versionCode = .*/versionCode = $VERSION_CODE/" android_app/app/build.gradle.kts
+      - name: 5. [仅发布] 计算新版本号
+        id: bump_version
+        uses: mathieudutour/github-tag-action@v6.2
+        if: startsWith(github.event.head_commit.message, 'feat:') || startsWith(github.event.head_commit.message, 'fix:')
+        with:
+          # 让工具自动检测最新的 tag，而不是我们手动提供
+          # custom_tag: ${{ steps.get_version.outputs.version }} <--- 删除或注释掉这一行
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: "patch" # 默认是 patch，符合 fix: 的行为
+
           
       - name: 6. [仅发布] 提交版本更改并创建 Tag
         if: steps.bump_version.outputs.new_version
