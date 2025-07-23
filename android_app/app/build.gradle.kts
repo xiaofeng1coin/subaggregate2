@@ -1,4 +1,5 @@
 // 文件路径: android_app/app/build.gradle.kts
+// 这是完整的、已修正的版本，请直接替换
 
 plugins {
     id("com.android.application")
@@ -10,11 +11,8 @@ android {
     namespace = "com.example.subaggregator"
     compileSdk = 34
 
-    // [关键修改开始] 替换为从环境变量读取密钥的正式签名配置
     signingConfigs {
         create("release") {
-            // 只在CI环境（有环境变量时）才配置这些值
-            // 这可以防止在没有设置环境变量的本地机器上构建时出错
             val keystoreFile = System.getenv("RELEASE_KEYSTORE")
             if (keystoreFile != null && File(keystoreFile).exists()) {
                 storeFile = file(keystoreFile)
@@ -24,7 +22,6 @@ android {
             }
         }
     }
-    // [关键修改结束]
 
     defaultConfig {
         applicationId = "com.example.subaggregator"
@@ -48,9 +45,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // [关键修改开始] 告诉 release 构建类型使用我们新的 "release" 签名配置
             signingConfig = signingConfigs.getByName("release")
-            // [关键修改结束]
         }
     }
     compileOptions {
@@ -62,6 +57,10 @@ android {
     }
     buildFeatures {
         viewBinding = true
+        // =======================> [修复 1: 开启 BuildConfig] <=======================
+        // 这一行是解决 "Unresolved reference: BuildConfig" 错误所必需的。
+        buildConfig = true
+        // =======================> 修复 1 结束 <==================================
     }
 }
 
@@ -73,7 +72,10 @@ chaquopy {
     }
     defaultConfig {
         version = "3.11"
-        buildPython("python")
+        // =======================> [修复 2: 修正 buildPython 配置] <================
+        // 原来的 "python" 是无效值，这里明确指定为 "3.11"，与 version 保持一致。
+        buildPython("3.11")
+        // =======================> 修复 2 结束 <==================================
         pip {
             install("Flask")
             install("PyYAML")
