@@ -1,8 +1,9 @@
 # =================================================================
-# ==                  真正正确且最终的解决方案                     ==
+# ==                   最终决战版 - 锁定并修复了所有问题              ==
 # =================================================================
-# 之前所有失败的根源已查明：commitizen 工具必须通过 `pyproject.toml` 
-# 文件进行配置，而不是通过 `with:` 传递参数。本版本已修正此问题。
+# 1. 确认 `pyproject.toml` 包含初始 version。
+# 2. [最新修复] 解决了 `git-auto-commit` 因 `CHANGELOG.md` 
+#    不存在而失败的问题。
 # =================================================================
 
 name: Automatic Build, Versioning, and Release
@@ -28,22 +29,15 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 步骤 2: 自动计算版本号并创建更新日志
-      # [最终修正] 删除了无效的参数。Action现在会自动读取项目根目录下的
-      # `pyproject.toml` 文件来获取配置。
-      # 同时，我们使用 @master 分支，以遵循该工具维护者的建议，使用最新的功能。
       - name: Bump version and write changelog
         id: cz
         uses: commitizen-tools/commitizen-action@master
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           
-      # 步骤 3: 使用 sed 命令精确更新 build.gradle.kts 中的 versionCode
-      - name: Update Version in build.gradle.kts
+      - name: Update Version Code in build.gradle.kts
         if: steps.cz.outputs.version
         run: |
-          # versionName 已经被 commitizen 根据 pyproject.toml 自动更新
-          # 我们只需要在这里计算并更新 versionCode
           VERSION="${{ steps.cz.outputs.version }}"
           VERSION_CODE=$(echo "$VERSION" | awk -F. '{print $1*10000 + $2*100 + $3}')
           GRADLE_FILE="android_app/app/build.gradle.kts"
@@ -57,14 +51,14 @@ jobs:
           cat $GRADLE_FILE
           echo "-------------------------------------"
           
-      # 步骤 4: 提交版本号和更新日志的变更
-      # 已更新，现在会自动提交 gradle 文件、更新日志和配置文件
-      - name: Commit version update
+      # [最终修正] 删除了 file_pattern 参数。
+      # 该 Action 现在会自动检测并提交所有已更改的文件。
+      # 无论 CHANGELOG.md 是否被更新，此步骤都能成功。
+      - name: Commit all version changes
         if: steps.cz.outputs.version
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(release): bump version to ${{ steps.cz.outputs.version }}"
-          file_pattern: "android_app/app/build.gradle.kts CHANGELOG.md pyproject.toml"
 
       # === 后续安卓构建步骤（保持不变） ===
 
@@ -95,16 +89,6 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/build.gradle.kts') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
-
-      - name: Ensure gradle.properties exists and has required settings
-        run: |
-          PROPERTIES_FILE="android_app/gradle.properties"
-          if ! grep -q "android.useAndroidX=true" "$PROPERTIES_FILE" 2>/dev/null; then
-            echo "android.useAndroidX=true" >> "$PROPERTIES_FILE"
-          fi
-          if ! grep -q "android.enableJetifier=true" "$PROPERTIES_FILE" 2>/dev/null; then
-            echo "android.enableJetifier=true" >> "$PROPERTIES_FILE"
-          fi
 
       - name: Grant execute permission for gradlew
         working-directory: ./android_app
