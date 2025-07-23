@@ -14,6 +14,7 @@ import com.chaquo.python.PyException
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import kotlin.concurrent.thread
+import com.example.subaggregator.R
 
 class FlaskService : Service() {
 
