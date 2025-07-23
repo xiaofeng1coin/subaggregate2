@@ -7,13 +7,19 @@ plugins {
     id("com.chaquo.python")
 }
 
+// === 新增：一个辅助函数，用于从版本名生成版本号 ===
+fun generateVersionCode(versionName: String): Int {
+    val parts = versionName.split('.').map { it.toInt() }
+    // 例如 "1.2.3" -> 1*10000 + 2*100 + 3 = 10203
+    return parts[0] * 10000 + parts[1] * 100 + parts[2]
+}
+
 android {
     namespace = "com.example.subaggregator"
     compileSdk = 34
 
     signingConfigs {
         create("release") {
-            // 从项目属性中读取密钥信息，这些属性由CI传入
             if (project.hasProperty("RELEASE_KEYSTORE_FILE")) {
                 storeFile = file(project.property("RELEASE_KEYSTORE_FILE") as String)
                 storePassword = project.property("RELEASE_KEYSTORE_PASSWORD") as String?
@@ -27,8 +33,21 @@ android {
         applicationId = "com.example.subaggregator"
         minSdk = 24
         targetSdk = 34
-        versionCode = 10002
-        versionName = "1.0.2" // 版本号将由 CI 动态管理
+        
+        // === 核心修改：动态设置版本号和版本名 ===
+        // 检查是否有从 CI 传入的 'versionName' 属性
+        val releaseVersionName = project.findProperty("versionName")?.toString()
+        if (releaseVersionName != null) {
+            // 如果有，就使用它 (记得去掉 'v' 前缀)
+            versionName = releaseVersionName.removePrefix("v")
+            versionCode = generateVersionCode(versionName)
+        } else {
+            // 如果没有（例如本地开发），使用默认值
+            versionName = "1.0.2"
+            versionCode = 10002
+        }
+        // =========================================
+        
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86"))
@@ -53,13 +72,12 @@ android {
 
     buildFeatures {
         viewBinding = true
-        buildConfig = true // 保持这个，它是正确的
+        buildConfig = true
     }
 }
 
 chaquopy {
     defaultConfig {
-        // 核心修复：现在 buildPython 会使用由 setup-python action 安装的 python3.11
         buildPython("python3.11")
         pip {
             install("Flask")
