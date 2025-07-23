@@ -1,19 +1,21 @@
-# 这个文件是 commitizen 工具的专用配置文件
+# 这是 commitizen 工具的配置文件
 [tool.commitizen]
+# ！！！关键修正！！！
+# 我们必须在这里提供一个初始的版本号，作为版本提升的起点。
+# 你可以根据你的实际情况修改这个初始版本。
+version = "1.0.1"
+
 # 告知 commitizen 我们使用语义化版本（例如：1.2.3）
 version_scheme = "semver"
 
-# 指定版本号所在的文件路径
-# 注意：路径必须是从项目根目录开始计算的
+# 指定版本号所在的其他文件路径
 version_files = [
     "android_app/app/build.gradle.kts"
 ]
 
-# 这是一个正则表达式，用来在上面的文件中找到并替换版本号
-# 它会精确匹配 versionName = "..." 这一行
-# (?P<version>.*) 是 commitizen 要求的，用来捕获版本号本身
+# 用来在其他文件中查找和替换版本号的正则表达式
 version_pattern = 'versionName = "(?P<version>.*)"'
 
-# 开启自动在版本更新时创建或更新 CHANGELOG.md 文件
+# 开启自动更新 CHANGELOG.md 文件
 update_changelog_on_bump = true
 changelog_file = "CHANGELOG.md"
