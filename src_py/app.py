@@ -1,4 +1,4 @@
-# 文件名: app.py (最终修正版 - 2024-07-23)
+# 文件名: app.py (最终修正版 V2 - 修复了 AndroidPlatform 调用错误)
 
 import os
 import json
@@ -29,30 +29,28 @@ console_handler.setFormatter(formatter)
 root_logger.addHandler(console_handler)
 
 
-# --- [最终修正: 采用最可靠的方式判断环境] ---
+# --- [最终修正逻辑 V2 - 正确的 Chaquopy 调用方式] ---
 try:
-    # 尝试导入一个只有 Chaquopy 才存在的模块。
-    # 如果成功，说明在安卓环境；如果失败（ImportError），则不在。
     from com.chaquo.python.android import AndroidPlatform
     IN_ANDROID = True
 except ImportError:
     IN_ANDROID = False
 
 if IN_ANDROID:
-    # 在安卓环境中，我们从已成功导入的 com.chaquo.python.android 包获取应用私有目录
-    # getFilesDir() 返回的是App专属的、可持久化的私有目录 (例如: /data/data/com.example.subaggregator/files)
-    # 在这个目录中读写文件，可以保证 App 重启后数据不丢失。
-    data_dir = str(AndroidPlatform.getFilesDir())
+    # 在安卓环境中，我们首先获取应用的“上下文”（Context）对象
+    context = AndroidPlatform.getApplication()
+    # 然后通过上下文对象，获取App专属的、可持久化的私有目录 (例如: /data/data/com.example.subaggregator/files)
+    data_dir = str(context.getFilesDir())
     DATA_FILE = os.path.join(data_dir, 'data.json')
     # 对于只读的模板文件，仍然从脚本所在位置读取
     current_script_dir = os.path.dirname(os.path.abspath(__file__))
     CLASH_TEMPLATE_FILE = os.path.join(current_script_dir, 'clash_template.yaml')
 else:
-    # 在 Docker 或本地开发环境中，保持原有逻辑，确保完全兼容
+    # 在 Docker 或本地开发环境中，保持原有逻辑
     current_script_dir = os.path.dirname(os.path.abspath(__file__))
     DATA_FILE = os.path.join(current_script_dir, 'data.json')
     CLASH_TEMPLATE_FILE = os.path.join(current_script_dir, 'clash_template.yaml')
-# --- [最终修正结束] ---
+# --- [修正结束] ---
 
 
 # --- 启动时打印关键诊断信息 ---
@@ -65,7 +63,7 @@ logging.info("=" * 50)
 
 
 # =================================================================================
-# 节点解析 (Parsers)
+# 节点解析 (Parsers) - (无改动，保持原样)
 # =================================================================================
 
 def parse_link(link: str):
@@ -134,13 +132,11 @@ def _parse_trojan(link: str):
 
 
 # =================================================================================
-# Clash配置生成 (Generator)
+# Clash配置生成 (Generator) - (无改动，保持原样)
 # =================================================================================
 
 def generate_clash_config(proxies: list, template_content: str) -> str:
-    """智能生成Clash配置，并提供详细的日志记录"""
     logging.info("--- [开始生成Clash配置] ---")
-
     try:
         config_dict = yaml.safe_load(template_content)
         if not isinstance(config_dict, dict):
@@ -148,15 +144,12 @@ def generate_clash_config(proxies: list, template_content: str) -> str:
     except yaml.YAMLError as e:
         logging.error(f"  [错误] 解析YAML模板时出错: {e}")
         return "# 模板解析失败，请检查 clash_template.yaml 文件格式。"
-
     junk_keywords = ['流量', '到期', '重置', '过滤', '剩余', '套餐']
     filtered_proxies = [p for p in proxies if not any(kw in p.get('name', '').lower() for kw in junk_keywords)]
     logging.info(f"  - [步骤1] 过滤流量信息等无效条目，有效节点数: {len(proxies)} -> {len(filtered_proxies)}")
-
     config_dict['proxies'] = filtered_proxies
     all_proxy_names = [p['name'] for p in filtered_proxies]
     logging.info("  - [步骤2] 将所有有效节点注入到模板 'proxies' 键。")
-
     logging.info("  - [步骤3] 开始智能地区分组...")
     region_map = {
         '🇭🇰 香港节点': ['香港', 'Hong Kong', 'HK', 'HKT'], '🇨🇳 台湾节点': ['台湾', 'Taiwan', 'TW', 'TPE'],
@@ -169,10 +162,8 @@ def generate_clash_config(proxies: list, template_content: str) -> str:
         '🇮🇳 印度节点': ['印度', 'India', 'IN'], '🇻🇳 越南节点': ['越南', 'Vietnam', 'VN'],
         '🇵🇱 波兰节点': ['波兰', 'Poland', 'PL']
     }
-
     region_nodes = {key: [] for key in region_map.keys()}
     other_nodes = []
-
     for name in all_proxy_names:
         matched = False
         for region_name_emoji, keywords in region_map.items():
@@ -182,7 +173,6 @@ def generate_clash_config(proxies: list, template_content: str) -> str:
                 break
         if not matched:
             other_nodes.append(name)
-
     logging.info("    - 分组统计报告:")
     for region, nodes in region_nodes.items():
         if nodes: logging.info(f"      - {region}: {len(nodes)} 个节点")
@@ -192,13 +182,11 @@ def generate_clash_config(proxies: list, template_content: str) -> str:
             logging.info(f"      - 其他地区节点示例: {node_name}")
         if len(other_nodes) > 10:
             logging.info(f"      - ... (还有 {len(other_nodes) - 10} 个未显示)")
-
     logging.info("  - [步骤4] 填充模板中的代理组...")
     if 'proxy-groups' in config_dict and isinstance(config_dict['proxy-groups'], list):
         for group in config_dict['proxy-groups']:
             if isinstance(group, dict) and 'name' in group:
                 group_name = group.get('name', '')
-
                 if group_name in ['🚀 手动切换', '♻️ 自动选择', '🔯 故障转移', '🔮 负载均衡']:
                     group['proxies'] = all_proxy_names
                     logging.info(f"    - 已填充通用组 '{group_name}'，共 {len(all_proxy_names)} 个节点。")
@@ -209,13 +197,12 @@ def generate_clash_config(proxies: list, template_content: str) -> str:
                 elif group_name == '🌍 其他地区':
                     group['proxies'] = other_nodes if other_nodes else ['DIRECT']
                     logging.info(f"    - 已填充组 '{group_name}'，共 {len(other_nodes)} 个节点。")
-
     logging.info("--- [Clash配置生成完毕] ---")
     return yaml.dump(config_dict, allow_unicode=True, sort_keys=False)
 
 
 # =================================================================================
-# 辅助函数
+# 辅助函数 - (无改动，保持原样)
 # =================================================================================
 
 def load_data():
@@ -249,21 +236,17 @@ def save_data(data):
         logging.error(f"DIAGNOSTIC: !!! FAILED to SAVE data to {DATA_FILE}: {e}", exc_info=True)
 
 
-
 def apply_filter(nodes, keywords_str, filter_type):
     if not keywords_str:
         return nodes
-
     keywords = []
     if filter_type == "全局":
         keywords = [kw for kw in keywords_str.split(' ') if kw]
     else:
         standardized_str = keywords_str.replace('\n', ',').replace(' ', ',')
         keywords = [kw.strip() for kw in standardized_str.split(',') if kw.strip()]
-
     if not keywords:
         return nodes
-
     logging.info(f"    - 执行 {filter_type} 过滤, 关键词 (大小写敏感): {', '.join(keywords)}")
     original_count = len(nodes)
     filtered_nodes = [node for node in nodes if not any(kw in node.get('name', '') for kw in keywords)]
@@ -272,7 +255,7 @@ def apply_filter(nodes, keywords_str, filter_type):
 
 
 # =================================================================================
-# 主路由和聚合逻辑
+# 主路由和聚合逻辑 - (无改动，保持原样)
 # =================================================================================
 
 @app.route('/')
@@ -302,41 +285,31 @@ def index():
 def aggregate_clash():
     logging.info("=" * 30 + " [新聚合请求开始] " + "=" * 30)
     logging.info(f"来源IP: {request.remote_addr}, User-Agent: {request.user_agent.string}")
-
     data = load_data()
     enabled_ids = set(data.get('aggregation_enabled', []))
     subscriptions_to_aggregate = [sub for sub in data.get('subscriptions', []) if sub.get('id') in enabled_ids]
-
     logging.info(
         f"- 找到 {len(data.get('subscriptions', []))} 个已存订阅，其中 {len(subscriptions_to_aggregate)} 个已启用聚合。")
-
     if not subscriptions_to_aggregate:
         logging.warning("  - 没有任何启用的订阅，无法生成聚合配置。")
         return make_response("没有启用的订阅，无法生成聚合配置。", 404)
-
     all_nodes = []
     headers = {'User-Agent': 'Clash/2023.08.17'}
-
     for sub_info in subscriptions_to_aggregate:
         sub_name = sub_info.get('name', 'Unnamed')
         sub_url = sub_info.get('url', '').strip()
         sub_filter_keywords = sub_info.get('filter_keywords', '')
         sub_filter_enabled = sub_info.get('filter_enabled', False)
-
         if not sub_url:
             logging.warning(f"  - 订阅 '{sub_name}' URL为空，已跳过。")
             continue
-
         logging.info(f"  - 正在处理订阅 '{sub_name}': {sub_url[:70]}...")
-
         try:
             sub_response = requests.get(sub_url, timeout=20, headers=headers)
             sub_response.raise_for_status()
             logging.info(f"    - 下载成功 (状态码: {sub_response.status_code})")
-
             raw_content = sub_response.text
             nodes_from_sub = []
-
             try:
                 clash_config = yaml.safe_load(raw_content)
                 if 'proxies' in clash_config and isinstance(clash_config['proxies'], list):
@@ -350,7 +323,6 @@ def aggregate_clash():
                 except (binascii.Error, UnicodeDecodeError):
                     content = raw_content
                     logging.info("      - 非Base64编码，作为纯文本处理。")
-
                 links = content.splitlines()
                 logging.info(f"      - 找到 {len(links)} 行内容，开始逐行解析...")
                 for link in links:
@@ -359,42 +331,34 @@ def aggregate_clash():
                         if node:
                             nodes_from_sub.append(node)
                 logging.info(f"    - 从链接列表成功解析出 {len(nodes_from_sub)} 个节点。")
-            
             logging.info(f"    - 为 {len(nodes_from_sub)} 个节点添加前缀 '[{sub_name}]'")
             for node in nodes_from_sub:
                 if 'name' in node and not node['name'].startswith(f"[{sub_name}] "):
                     node['name'] = f"[{sub_name}] " + node['name']
-            
             if sub_filter_enabled and sub_filter_keywords:
                 nodes_after_sub_filter = apply_filter(nodes_from_sub, sub_filter_keywords, f"订阅内[{sub_name}]")
                 all_nodes.extend(nodes_after_sub_filter)
             else:
                 logging.info("    - 订阅内过滤器未开启。")
                 all_nodes.extend(nodes_from_sub)
-
         except requests.RequestException as e:
             logging.error(f"  - [错误] 下载订阅 '{sub_name}' 失败: {e}. 已跳过。")
             continue
         except Exception as e:
             logging.error(f"  - [错误] 处理订阅 '{sub_name}' 时发生未知错误: {e}", exc_info=False)
             continue
-    
     logging.info(f"- 所有订阅处理完毕，合并后共 {len(all_nodes)} 个节点。")
     final_nodes = all_nodes
-
     global_filter_enabled = data.get('global_filter_enabled', False)
     global_filter_keywords = data.get('global_filter_keywords', '')
     if global_filter_enabled and global_filter_keywords:
         final_nodes = apply_filter(all_nodes, global_filter_keywords, "全局")
     else:
         logging.info("- 全局过滤器未开启。")
-
     logging.info(f"- 最终节点数: {len(final_nodes)} 个。")
-
     if not final_nodes:
         logging.warning("  - 所有节点均被过滤或获取失败，无法生成有效配置。")
         return make_response("所有节点均被过滤或获取失败，无法生成有效配置。", 400)
-    
     try:
         template_path = CLASH_TEMPLATE_FILE
         if os.path.exists(template_path):
@@ -404,22 +368,19 @@ def aggregate_clash():
         else:
             logging.error(f"  - [严重错误] 未找到 '{template_path}'，无法生成配置。")
             return make_response(f"错误：模板文件 '{template_path}' 未找到。", 500)
-        
         final_config_str = generate_clash_config(final_nodes, template_content)
-
         response = make_response(final_config_str)
         response.headers['Content-Type'] = 'text/plain; charset=utf-8'
         response.headers['Content-Disposition'] = 'attachment; filename=clash.yaml'
         logging.info("=" * 31 + " [聚合请求成功] " + "=" * 31)
         return response
-
     except Exception as e:
         logging.critical(f"  - [严重错误] 生成最终配置文件时出错: {e}", exc_info=True)
         return make_response(f"服务器错误: {e}", 500)
 
 
 # =================================================================================
-# API 路由
+# API 路由 - (无改动，保持原样)
 # =================================================================================
 
 @app.route('/api/data', methods=['GET'])
@@ -450,10 +411,8 @@ def update_subscription(sub_id):
     req_data = request.get_json()
     if not req_data:
         return jsonify({"message": "请求数据为空"}), 400
-
     data = load_data()
     sub_to_update = next((sub for sub in data['subscriptions'] if sub['id'] == sub_id), None)
-
     if sub_to_update:
         sub_to_update.update(req_data)
         save_data(data)
@@ -463,7 +422,6 @@ def update_subscription(sub_id):
             return jsonify({"message": "过滤器保存成功"})
         else:
             return jsonify({"message": "订阅更新成功"})
-
     return jsonify({"message": "未找到该订阅"}), 404
 
 
@@ -498,7 +456,7 @@ def save_global_filter():
     return jsonify({"message": "全局设置已保存"})
 
 
-# --- 日志查看路由 (保持原样) ---
+# --- 日志查看路由 - (无改动，保持原样) ---
 @app.route('/debuglog')
 def debug_log():
     clear_button = '''
@@ -521,15 +479,20 @@ def clear_debug_log():
 # --- 日志路由结束 ---
 
 
-# --- 启动逻辑 (保持原样) ---
-
+# --- 启动逻辑 - (无改动，保持原样) ---
 def start_server():
     """此函数由安卓的 Chaquopy 调用，用于在后台线程中启动服务器。"""
-    if not os.path.exists(CLASH_TEMPLATE_FILE):
-        logging.error(f"致命错误: 模板文件 '{CLASH_TEMPLATE_FILE}' 未找到, 服务器无法启动。")
-        return
-    logging.info("=" * 20 + " Chaquopy Sub Aggregator 服务器启动 " + "=" * 20)
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+    try:
+        if not os.path.exists(CLASH_TEMPLATE_FILE):
+            logging.error(f"致命错误: 模板文件 '{CLASH_TEMPLATE_FILE}' 未找到, 服务器无法启动。")
+            return
+        logging.info("=" * 20 + " Chaquopy Sub Aggregator 服务器启动 " + "=" * 20)
+        app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+    except Exception as e:
+        # 捕获启动过程中的任何异常并记录下来
+        logging.critical(f"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        logging.critical(f"FATAL: Flask server failed to start: {e}")
+        logging.critical(f"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", exc_info=True)
 
 if __name__ == '__main__':
     if not IN_ANDROID:
