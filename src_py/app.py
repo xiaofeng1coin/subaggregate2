@@ -1,4 +1,4 @@
-# 文件名: app.py (最终决定版 - 2024-07-23)
+# 文件名: app.py (最终决定版 - 包含调试功能和详细日志)
 
 import os
 import json
@@ -29,45 +29,31 @@ console_handler.setFormatter(formatter)
 root_logger.addHandler(console_handler)
 
 
-# --- [最终决定版逻辑: 采用最可靠的文件路径回溯法] ---
+# --- 文件路径定位 (无改动) ---
 try:
-    # 这一步依然是判断环境最可靠的方式
     from com.chaquo.python.android import AndroidPlatform
     IN_ANDROID = True
 except ImportError:
     IN_ANDROID = False
 
 if IN_ANDROID:
-    # 在安卓环境中，我们利用 __file__ 这个绝对可靠的锚点来定位路径。
-    # __file__ 的绝对路径是 /data/data/包名/files/chaquopy/AssetFinder/app/app.py
-    # 我们需要找到可写的 /data/data/包名/files/ 目录，也就是当前脚本往上数3级目录。
     current_script_path = os.path.abspath(__file__)
-    # os.path.dirname() 用于获取上一级目录
-    app_dir = os.path.dirname(current_script_path)  # .../app
-    assetfinder_dir = os.path.dirname(app_dir)      # .../AssetFinder
-    chaquopy_dir = os.path.dirname(assetfinder_dir) # .../chaquopy
-    writable_files_dir = os.path.dirname(chaquopy_dir) # 这是我们真正需要的目标目录：.../files
-
-    # 设置可持久化数据文件的最终路径
+    app_dir = os.path.dirname(current_script_path)
+    assetfinder_dir = os.path.dirname(app_dir)
+    chaquopy_dir = os.path.dirname(assetfinder_dir)
+    writable_files_dir = os.path.dirname(chaquopy_dir)
     DATA_FILE = os.path.join(writable_files_dir, 'data.json')
-    
-    # 对于只读的模板文件，它的位置依然是和脚本在一起的，所以使用原来的逻辑
     CLASH_TEMPLATE_FILE = os.path.join(app_dir, 'clash_template.yaml')
 else:
-    # 在 Docker 或本地开发环境中，保持原有逻辑，一切工作正常
     current_script_dir = os.path.dirname(os.path.abspath(__file__))
     DATA_FILE = os.path.join(current_script_dir, 'data.json')
     CLASH_TEMPLATE_FILE = os.path.join(current_script_dir, 'clash_template.yaml')
-# --- [最终决定版逻辑结束] ---
 
-
-# --- 启动时打印关键诊断信息 ---
 logging.info("=" * 50)
 logging.info(f"DIAGNOSTIC: Environment detected: {'Android' if IN_ANDROID else 'Docker/Local'}")
 logging.info(f"DIAGNOSTIC: DATA_FILE path is set to -----> {DATA_FILE}")
 logging.info(f"DIAGNOSTIC: CLASH_TEMPLATE_FILE path is set to -----> {CLASH_TEMPLATE_FILE}")
 logging.info("=" * 50)
-# --- 诊断信息结束 ---
 
 
 # =================================================================================
@@ -263,7 +249,7 @@ def apply_filter(nodes, keywords_str, filter_type):
 
 
 # =================================================================================
-# 主路由和聚合逻辑 - (无改动)
+# 主路由和聚合逻辑
 # =================================================================================
 
 @app.route('/')
@@ -280,13 +266,10 @@ def index():
         logging.error(f"模板文件 '{template_name}' 渲染失败: {e}", exc_info=True)
         return f"<h1>Error</h1><p>Template file '{template_name}' could not be rendered. Check logs.</p>", 500
  
-    # --- [最终修改] 直接返回原始HTML，从而“跳过”下面添加调试按钮的逻辑 ---
-    return original_html
- 
-    # --- [已注释的调试代码] ---
-    # 如果将来需要再次开启调试按钮，请：
-    # 1. 注释掉上面这行 `return original_html`
-    # 2. 取消下面所有代码的注释 (删除每行前面的 '#')
+    # --- [修改开始] 为方便调试，添加一个“调试开关” ---
+    #
+    #   想要在页面上显示“查看调试日志”按钮, 请取消下面所有行的注释。
+    #   正式发布时, 请确保下面所有行都被注释掉 (保持当前状态)。
     #
     # debug_link_html = '''
     # <div style="position: fixed; bottom: 10px; right: 10px; padding: 8px 12px; background-color: yellow; color: black; border: 1px solid black; border-radius: 5px; z-index: 9999; font-family: sans-serif; font-size: 14px;">
@@ -295,10 +278,14 @@ def index():
     # </body>
     # '''
     # if '</body>' in original_html:
-    #     return original_html.replace('</body>', debug_link_html + '</html>', 1)
+    #     return original_html.replace('</body>', debug_link_html, 1)
     # else:
-    #     return original_html + debug_link_html
-    # --- [注释结束] ---
+    #     return original_html + debug_link_html.replace('</body>', '')
+    #
+    # --- [修改结束] ---
+ 
+    # 默认状态：直接返回原始HTML，不带调试按钮
+    return original_html
 
 
 @app.route('/aggregate/clash.yaml')
@@ -400,7 +387,7 @@ def aggregate_clash():
 
 
 # =================================================================================
-# API 路由 - (无改动)
+# API 路由
 # =================================================================================
 
 @app.route('/api/data', methods=['GET'])
@@ -445,16 +432,54 @@ def update_subscription(sub_id):
     return jsonify({"message": "未找到该订阅"}), 404
 
 
+# --- [修改开始] 为删除操作添加极其详细的日志 ---
 @app.route('/api/subscriptions/<sub_id>', methods=['DELETE'])
 def delete_subscription(sub_id):
+    logging.info("="*20 + " [DELETE REQUEST START] " + "="*20)
+    logging.info(f"  - Received DELETE request for subscription ID: '{sub_id}'")
+    
     data = load_data()
-    original_len = len(data['subscriptions'])
-    data['subscriptions'] = [sub for sub in data['subscriptions'] if sub['id'] != sub_id]
-    if len(data['subscriptions']) < original_len:
-        data['aggregation_enabled'] = [id_ for id_ in data.get('aggregation_enabled', []) if id_ != sub_id]
-        save_data(data)
+    
+    original_sub_list = data.get('subscriptions', [])
+    original_len = len(original_sub_list)
+    logging.info(f"  - [Before] Number of subscriptions: {original_len}")
+    
+    # 查找要删除的订阅
+    sub_to_delete = next((sub for sub in original_sub_list if sub.get('id') == sub_id), None)
+    
+    if sub_to_delete:
+        logging.info(f"  - Match found! Details: Name='{sub_to_delete.get('name')}', URL='{sub_to_delete.get('url')}'")
+    else:
+        logging.warning(f"  - No match found for ID '{sub_id}' in the current data.")
+
+    # 执行删除操作
+    data['subscriptions'] = [sub for sub in original_sub_list if sub['id'] != sub_id]
+    
+    new_len = len(data['subscriptions'])
+    logging.info(f"  - [After] Number of subscriptions: {new_len}")
+
+    if new_len < original_len:
+        logging.info("  - Subscription list changed. Deletion is considered successful.")
+        logging.info("  - Now, cleaning the 'aggregation_enabled' list...")
+        
+        original_agg_list = data.get('aggregation_enabled', [])
+        original_agg_len = len(original_agg_list)
+        logging.info(f"    - Before cleanup, 'aggregation_enabled' has {original_agg_len} items: {original_agg_list}")
+
+        data['aggregation_enabled'] = [id_ for id_ in original_agg_list if id_ != sub_id]
+        
+        new_agg_list = data.get('aggregation_enabled', [])
+        new_agg_len = len(new_agg_list)
+        logging.info(f"    - After cleanup, 'aggregation_enabled' has {new_agg_len} items: {new_agg_list}")
+        
+        save_data(data) # 持久化所有更改
+        logging.info("="*20 + " [DELETE REQUEST SUCCESS] " + "="*20)
         return jsonify({"message": "订阅删除成功"})
+    
+    logging.error(f"  - CRITICAL: Length of subscription list did not change. Deletion failed because ID '{sub_id}' was not found.")
+    logging.info("="*20 + " [DELETE REQUEST FAILED] " + "="*20)
     return jsonify({"message": "未找到该订阅"}), 404
+# --- [修改结束] ---
 
 
 @app.route('/api/aggregation', methods=['POST'])
@@ -476,27 +501,32 @@ def save_global_filter():
     return jsonify({"message": "全局设置已保存"})
 
 
-# --- 日志查看路由 - (无改动) ---
+# --- [新增开始] 日志查看路由 ---
 @app.route('/debuglog')
 def debug_log():
+    # 增加一些方便的按钮
     clear_button = '''
     <div style="position: fixed; top: 10px; right: 10px;">
         <form method="POST" action="/debuglog/clear">
-            <button type="submit">清空日志</button>
+            <button type="submit" style="padding: 8px 12px; cursor: pointer;">清空日志</button>
         </form>
-        <button onclick="location.reload()">刷新</button>
+        <button onclick="location.reload()" style="padding: 8px 12px; cursor: pointer; margin-top: 5px;">刷新</button>
     </div>
     '''
+    # 从内存中获取所有日志内容
     log_contents = log_capture_string.getvalue()
-    return f"<html><body>{clear_button}<pre>{escape(log_contents)}</pre></body></html>"
+    # 使用<pre>标签来保留换行和空格，并用escape防止XSS
+    return f"<html><body style='background:#111;color:#eee;font-family:monospace;line-height:1.5;padding:1em;'>{clear_button}<pre>{escape(log_contents)}</pre></body></html>"
 
 @app.route('/debuglog/clear', methods=['POST'])
 def clear_debug_log():
+    # 清空内存中的日志
     log_capture_string.truncate(0)
     log_capture_string.seek(0)
-    logging.info("DIAGNOSTIC: Log has been manually cleared.")
+    logging.info("DIAGNOSTIC: Log has been manually cleared by user.")
+    # 重定向回日志页面
     return '<script>window.location.href="/debuglog";</script>'
-# --- 日志路由结束 ---
+# --- [新增结束] ---
 
 
 # --- 启动逻辑 - (无改动) ---
@@ -523,4 +553,3 @@ if __name__ == '__main__':
         app.run(host='0.0.0.0', port=5000, debug=False)
     else:
         logging.info("在安卓环境中被调用，等待原生代码启动服务器...")
-

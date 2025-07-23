@@ -1,21 +1,38 @@
 # 这是 commitizen 工具的配置文件
 [tool.commitizen]
-# ！！！关键修正！！！
-# 我们必须在这里提供一个初始的版本号，作为版本提升的起点。
-# 你可以根据你的实际情况修改这个初始版本。
+# [无改动] 初始版本号
 version = "1.0.1"
 
-# 告知 commitizen 我们使用语义化版本（例如：1.2.3）
+# [无改动] 使用语义化版本
 version_scheme = "semver"
 
-# 指定版本号所在的其他文件路径
+# [无改动] 版本号所在的其他文件路径
 version_files = [
     "android_app/app/build.gradle.kts"
 ]
 
-# 用来在其他文件中查找和替换版本号的正则表达式
+# [无改动] 查找和替换版本号的正则表达式
 version_pattern = 'versionName = "(?P<version>.*)"'
 
-# 开启自动更新 CHANGELOG.md 文件
+# [无改动] 开启自动更新 CHANGELOG.md
 update_changelog_on_bump = true
 changelog_file = "CHANGELOG.md"
+
+# [！！！关键补充！！！]
+# 规定了不同 commit 类型如何影响版本号。
+# 我们明确指出，只有 'fix' 会增加 patch 版本，'feat' 增加 minor 版本。
+# 这样，当我们的 workflow 脚本强制只为 'fix' 提交运行 cz bump 时，
+# 它会知道应该执行 patch 级别的提升。
+# 对于其他 commit 类型，我们设置为 null，意味着它们不应该影响版本。
+[tool.commitizen.change_type_map]
+fix = "PATCH"
+feat = "MINOR"
+perf = "PATCH"
+refactor = "PATCH"
+build = "null"
+chore = "null"
+ci = "null"
+docs = "null"
+style = "null"
+test = "null"
+
