@@ -45,7 +45,7 @@ jobs:
       # [关键修复 1] 将版本号从错误的 `@v0` 修正为确切存在的 `@v0.25.0`。
       - name: Bump version and write changelog
         id: cz
-        uses: commitizen-tools/commitizen-action@v0.24.0
+        uses: commitizen-tools/commitizen-action@0.24.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           # 指定需要 `commitizen` 读取当前版本号的文件
