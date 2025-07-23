@@ -147,7 +147,7 @@ jobs:
           
           # 定位构建产物
           APK_FOLDER_NAME=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
-          apk_path=$(find ./app/build/outputs/apk/${APK_FOLDER_NAME} -name "*.apk" | head -n 1)
+          apk_path=$(find ./app/build/outputs/apk/${APK_FOLDER_NAME} -name "*.apk" | head -n 1 | sed 's|^\./||')
           
           if [[ -z "$apk_path" ]]; then
             echo "::error::APK not found in ./app/build/outputs/apk/${APK_FOLDER_NAME}/ after build!"
