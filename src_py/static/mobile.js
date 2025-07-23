@@ -1,11 +1,11 @@
 /*
  * 文件名: static/mobile.js
- * 描述: 完全独立的移动端交互脚本，不依赖 script.js。
- * [已修复 V2] 修复了异步操作后按钮持续加载的 Bug。
+ * 描述: 完全独立的移动端交互脚本。
+ * [已修复 V3] 使用自定义确认对话框，解决安卓WebView中删除功能失效的问题，并美化UI。
  */
 document.addEventListener('DOMContentLoaded', () => {
 
-    // --- 核心工具函数 (本地副本，实现完全隔离) ---
+    // --- 核心工具函数 ---
     const api = {
         async request(method, url, data) {
             const options = {
@@ -44,23 +44,14 @@ document.addEventListener('DOMContentLoaded', () => {
             toast.addEventListener('transitionend', () => toast.remove());
         }, 3000);
     };
-
-    // ---------- [唯一、决定性的修改处] ----------
-    /**
-     * 切换按钮的加载状态。
-     * [关键修复] 恢复状态时，先解除 disabled 状态，再恢复 innerHTML，避免浏览器渲染问题。
-     * @param {HTMLElement} btn - 目标按钮元素。
-     * @param {boolean} isLoading - 是否进入加载状态。
-     */
+    
     const toggleButtonLoading = (btn, isLoading) => {
         if (!btn) return;
-
         if (isLoading) {
             btn.dataset.originalHtml = btn.innerHTML;
             btn.disabled = true;
             btn.innerHTML = '<div class="spinner"></div>';
         } else {
-            // **关键改动**: 先将按钮设为可用状态，然后再修改其内容。
             btn.disabled = false;
             if (btn.dataset.originalHtml) {
                 btn.innerHTML = btn.dataset.originalHtml;
@@ -68,7 +59,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     };
-    // ---------- [修改结束] ----------
 
     const escapeHTML = (str) => {
         if (typeof str !== 'string') str = String(str);
@@ -76,6 +66,46 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     let ALL_DATA = {};
+    
+    // --- [关键修改：新增函数] 创建一个返回Promise的自定义确认对话框 ---
+    function showCustomConfirm(title, message) {
+        return new Promise(resolve => {
+            // 先移除可能存在的旧对话框，确保干净
+            document.querySelector('.confirm-dialog-backdrop')?.remove();
+
+            const backdrop = document.createElement('div');
+            backdrop.className = 'confirm-dialog-backdrop';
+
+            backdrop.innerHTML = `
+                <div class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+                    <div id="confirm-title" class="confirm-dialog-title">${escapeHTML(title)}</div>
+                    <p id="confirm-message" class="confirm-dialog-message">${escapeHTML(message)}</p>
+                    <div class="confirm-dialog-actions">
+                        <button class="btn-cancel">取消</button>
+                        <button class="btn-confirm">确认删除</button>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(backdrop);
+            
+            // 立即添加 'show' 类以触发CSS动画
+            requestAnimationFrame(() => {
+                backdrop.classList.add('show');
+            });
+
+            const closeDialog = (result) => {
+                backdrop.classList.remove('show');
+                backdrop.addEventListener('transitionend', () => {
+                    backdrop.remove();
+                    resolve(result);
+                }, { once: true });
+            };
+
+            backdrop.querySelector('.btn-confirm').onclick = () => closeDialog(true);
+            backdrop.querySelector('.btn-cancel').onclick = () => closeDialog(false);
+        });
+    }
 
     // --- 移动端 UI 渲染 ---
     const renderMobileUI = (data) => {
@@ -114,9 +144,9 @@ document.addEventListener('DOMContentLoaded', () => {
             checkAll.checked = allChecks.length > 0 && Array.from(allChecks).every(c => c.checked);
         }
     };
-
+    
     const renderGlobalFilter = (data) => {
-        const enabledEl = document.getElementById('globalFilterEnabled');
+         const enabledEl = document.getElementById('globalFilterEnabled');
         const keywordsEl = document.getElementById('globalFilterKeywords');
         if(enabledEl) enabledEl.checked = data.global_filter_enabled || false;
         if(keywordsEl) keywordsEl.value = data.global_filter_keywords || '';
@@ -185,7 +215,6 @@ document.addEventListener('DOMContentLoaded', () => {
         modalContentEl.innerHTML = contentHTML;
         modalView.classList.add('show');
     };
-
     const closeModal = () => modalView.classList.remove('show');
 
     const openActionSheet = (sub) => {
@@ -202,23 +231,32 @@ document.addEventListener('DOMContentLoaded', () => {
         backdrop.addEventListener('click', closeSheet);
         sheet.querySelector('.edit-action').addEventListener('click', () => { closeSheet(); openMobileModal('edit', sub); });
         sheet.querySelector('.filter-action').addEventListener('click', () => { closeSheet(); openMobileModal('filter', sub); });
+        
+        // --- [关键修改：替换 confirm] ---
         sheet.querySelector('.delete-action').addEventListener('click', async () => {
             closeSheet();
-            if (confirm(`确定要删除订阅 "${sub.name}" 吗？`)) {
+            const confirmed = await showCustomConfirm(
+                '确认操作',
+                `您确定要删除订阅 “${escapeHTML(sub.name)}” 吗？此操作无法撤销。`
+            );
+            
+            if (confirmed) {
                 try {
                     const result = await api.delete(`/api/subscriptions/${sub.id}`);
                     showToast(result.message || "删除成功");
                     await loadAndRender();
-                } catch(e) { showToast(e.message, 'error')}
+                } catch(e) { 
+                    showToast(e.message, 'error');
+                }
             }
         });
+        // --- [修改结束] ---
     };
 
     // --- 事件监听绑定 ---
     document.getElementById('showAddModalBtn').addEventListener('click', () => openMobileModal('add'));
     document.getElementById('closeModalBtn').addEventListener('click', closeModal);
-
-    // [鲁棒性增强] 使用按钮自身的变量引用，而不是 e.currentTarget
+    
     saveModalBtn.addEventListener('click', async () => {
         if (!currentModalAction) return;
         toggleButtonLoading(saveModalBtn, true);
@@ -255,7 +293,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.querySelectorAll('.enabled-sub').forEach(cb => cb.checked = e.target.checked);
         });
     }
-
+    
     document.getElementById('sub-list').addEventListener('change', e => {
         if (e.target.classList.contains('enabled-sub')) {
             const allChecks = document.querySelectorAll('.enabled-sub');
@@ -264,7 +302,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     });
-
+    
     const saveAggregationBtn = document.getElementById('saveAggregationBtn');
     if (saveAggregationBtn) {
         saveAggregationBtn.addEventListener('click', async () => {
@@ -276,7 +314,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (error) { showToast(error.message, 'error'); } finally { toggleButtonLoading(saveAggregationBtn, false); }
         });
     }
-
+    
     const saveGlobalFilterBtn = document.getElementById('saveGlobalFilterBtn');
     if (saveGlobalFilterBtn){
         saveGlobalFilterBtn.addEventListener('click', async () => {
@@ -290,18 +328,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-// ---------- [唯一修改处开始] ----------
-    // 兼容HTTP环境的复制功能
     function copyTextToClipboard(text) {
-        // 优先使用现代、安全的剪贴板API
         if (navigator.clipboard && window.isSecureContext) {
             return navigator.clipboard.writeText(text);
         } else {
-            // 为不安全的上下文(http)或旧浏览器提供后备方案
             return new Promise((resolve, reject) => {
                 const textArea = document.createElement("textarea");
                 textArea.value = text;
-                // 使文本区域不可见
                 textArea.style.position = 'fixed';
                 textArea.style.top = '-9999px';
                 textArea.style.left = '-9999px';
@@ -339,7 +372,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }).catch(err => showToast('复制失败: ' + err.message, 'error'));
         });
     }
-    // ---------- [唯一修改处结束] ----------
 
     // --- 启动应用 ---
     loadAndRender();
