@@ -1,5 +1,5 @@
 # 文件路径: .github/workflows/android-build.yml
-# 终极版：全自动版本管理和发布流程 (已修复YAML语法错误)
+# 终极版：全自动版本管理和发布流程 (已修复Action版本号错误)
 
 name: Automatic Build, Versioning, and Release
 
@@ -24,32 +24,27 @@ jobs:
 
       # 步骤 2: [核心] 自动计算版本号并创建更新日志
       - name: Bump version and write changelog
-        id: cz # 'cz' 是 commitizen 的缩写
-        uses: commitizen-tools/commitizen-action@0.25.0
+        id: cz
+        # [关键修正] 使用正确的主版本标签 @v0
+        uses: commitizen-tools/commitizen-action@v0
         with:
-          # 我们需要一个有写权限的token来创建标签
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # [关键修正] 将 "version_files" 的格式从YAML列表改为多行字符串
           version_files: |
             android_app/app/build.gradle.kts
-          version_scheme: "semver"
+          version_scheme: semver
           
       # 步骤 3: 使用 sed 命令精确更新 build.gradle.kts 中的版本号
       - name: Update Version in build.gradle.kts
         if: steps.cz.outputs.version # 只有在版本号发生变化时才执行
         run: |
           VERSION="${{ steps.cz.outputs.version }}"
-          # 从 "1.2.3" 生成整数版本号，例如 10203。适用于大多数情况。
-          # 注意：此方法在版本号超过两位数时可能需要调整，但对于 x.y.z 格式是可靠的。
-          VERSION_CODE=$(echo "$VERSION" | awk -F. '{sum=0; for(i=1;i<=NF;i++) sum=sum*100+$i; print int(sum)}')
+          VERSION_CODE=$(echo "$VERSION" | awk -F. '{print $1*10000 + $2*100 + $3}')
           GRADLE_FILE="android_app/app/build.gradle.kts"
           
           echo "New Version: $VERSION"
           echo "New Version Code: $VERSION_CODE"
           
-          # 使用 sed 更新 versionName 
           sed -i "s/versionName = \".*\"/versionName = \"$VERSION\"/" $GRADLE_FILE
-          # 使用 sed 更新 versionCode
           sed -i "s/versionCode = .*/versionCode = $VERSION_CODE/" $GRADLE_FILE
 
           echo "--- build.gradle.kts after update ---"
@@ -58,13 +53,13 @@ jobs:
           
       # 步骤 4: 提交版本号的变更
       - name: Commit version update
-        if: steps.cz.outputs.version # 只有在版本号发生变化时才执行
+        if: steps.cz.outputs.version
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(release): bump version to ${{ steps.cz.outputs.version }}"
-          file_pattern: "android_app/app/src/main/build.gradle.kts"
+          file_pattern: "android_app/app/build.gradle.kts"
 
-      # === 后续步骤保持基本不变，但会使用自动生成的版本号 ===
+      # === 后续步骤 ===
 
       - name: Prepare Python source for Android build
         run: |
@@ -106,7 +101,6 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build Debug APK with Gradle
-        # 只有在版本号发生变化（即有新版本发布）时才执行耗时的编译
         if: steps.cz.outputs.version 
         working-directory: ./android_app
         run: ./gradlew assembleDebug --stacktrace
@@ -127,10 +121,7 @@ jobs:
         if: steps.cz.outputs.version
         uses: softprops/action-gh-release@v2
         with:
-          # 使用自动生成的changelog作为body
           body: ${{ steps.cz.outputs.changelog }}
-          # 使用自动生成的版本号作为标签
           tag_name: "v${{ steps.cz.outputs.version }}"
           files: ${{ steps.rename_apk.outputs.final_apk_path }}
           make_latest: true
-
