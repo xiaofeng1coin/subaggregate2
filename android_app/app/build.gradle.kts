@@ -7,12 +7,17 @@ plugins {
     id("com.chaquo.python")
 }
 
-// === 新增：一个辅助函数，用于从版本名生成版本号 ===
-fun generateVersionCode(versionName: String): Int {
-    val parts = versionName.split('.').map { it.toInt() }
+// === 一个辅助函数，用于从版本名生成版本号 ===
+fun generateVersionCode(versionNameStr: String): Int {
+    val parts = versionNameStr.split('.').map { it.toInt() }
     // 例如 "1.2.3" -> 1*10000 + 2*100 + 3 = 10203
-    return parts[0] * 10000 + parts[1] * 100 + parts[2]
+    // 增加健壮性，防止版本号部分不足3位
+    val major = parts.getOrElse(0) { 0 }
+    val minor = parts.getOrElse(1) { 0 }
+    val patch = parts.getOrElse(2) { 0 }
+    return major * 10000 + minor * 100 + patch
 }
+
 
 android {
     namespace = "com.example.subaggregator"
@@ -36,11 +41,16 @@ android {
         
         // === 核心修改：动态设置版本号和版本名 ===
         // 检查是否有从 CI 传入的 'versionName' 属性
-        val releaseVersionName = project.findProperty("versionName")?.toString()
-        if (releaseVersionName != null) {
-            // 如果有，就使用它 (记得去掉 'v' 前缀)
-            versionName = releaseVersionName.removePrefix("v")
-            versionCode = generateVersionCode(versionName)
+        val releaseVersionNameProp = project.findProperty("versionName")?.toString()
+        
+        // **这里是关键修复**
+        if (releaseVersionNameProp != null) {
+            // 将外部传入的值赋给一个不可变的局部变量 a_finalVersionName
+            val finalVersionName = releaseVersionNameProp.removePrefix("v")
+            
+            // 使用这个不可变的局部变量进行赋值和函数调用
+            versionName = finalVersionName
+            versionCode = generateVersionCode(finalVersionName)
         } else {
             // 如果没有（例如本地开发），使用默认值
             versionName = "1.0.2"
@@ -94,5 +104,6 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1") // 更新版本，3.5.0 可能有小问题
 }
+
