@@ -63,7 +63,7 @@ class FlaskService : Service() {
     private fun createNotification(): Notification {
         // [注意] 请确保你的项目中有名为 ic_notification_icon 的图标。
         // 你可以去 res/drawable 目录，右键 -> New -> Vector Asset，然后从剪贴画中选择一个，比如 "cloud" 或 "sync"，命名为 ic_notification_icon
-        val icon = R.drawable.ic_launcher_foreground // 使用应用图标作为备用
+        val icon = R.drawable.ic_notification // 使用应用图标作为备用
 
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("Sub Aggregator 服务")
