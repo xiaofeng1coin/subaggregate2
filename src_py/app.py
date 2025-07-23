@@ -1,4 +1,4 @@
-# 文件名: app.py (最终修正版 V2 - 修复了 AndroidPlatform 调用错误)
+# 文件名: app.py (最终决定版 - 2024-07-23)
 
 import os
 import json
@@ -16,7 +16,7 @@ import requests
 # --- 基础设置 ---
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
-# --- 日志系统设置 (保持原样) ---
+# --- 日志系统设置 (无改动) ---
 log_capture_string = io.StringIO()
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
@@ -29,28 +29,36 @@ console_handler.setFormatter(formatter)
 root_logger.addHandler(console_handler)
 
 
-# --- [最终修正逻辑 V2 - 正确的 Chaquopy 调用方式] ---
+# --- [最终决定版逻辑: 采用最可靠的文件路径回溯法] ---
 try:
+    # 这一步依然是判断环境最可靠的方式
     from com.chaquo.python.android import AndroidPlatform
     IN_ANDROID = True
 except ImportError:
     IN_ANDROID = False
 
 if IN_ANDROID:
-    # 在安卓环境中，我们首先获取应用的“上下文”（Context）对象
-    context = AndroidPlatform.getApplication()
-    # 然后通过上下文对象，获取App专属的、可持久化的私有目录 (例如: /data/data/com.example.subaggregator/files)
-    data_dir = str(context.getFilesDir())
-    DATA_FILE = os.path.join(data_dir, 'data.json')
-    # 对于只读的模板文件，仍然从脚本所在位置读取
-    current_script_dir = os.path.dirname(os.path.abspath(__file__))
-    CLASH_TEMPLATE_FILE = os.path.join(current_script_dir, 'clash_template.yaml')
+    # 在安卓环境中，我们利用 __file__ 这个绝对可靠的锚点来定位路径。
+    # __file__ 的绝对路径是 /data/data/包名/files/chaquopy/AssetFinder/app/app.py
+    # 我们需要找到可写的 /data/data/包名/files/ 目录，也就是当前脚本往上数3级目录。
+    current_script_path = os.path.abspath(__file__)
+    # os.path.dirname() 用于获取上一级目录
+    app_dir = os.path.dirname(current_script_path)  # .../app
+    assetfinder_dir = os.path.dirname(app_dir)      # .../AssetFinder
+    chaquopy_dir = os.path.dirname(assetfinder_dir) # .../chaquopy
+    writable_files_dir = os.path.dirname(chaquopy_dir) # 这是我们真正需要的目标目录：.../files
+
+    # 设置可持久化数据文件的最终路径
+    DATA_FILE = os.path.join(writable_files_dir, 'data.json')
+    
+    # 对于只读的模板文件，它的位置依然是和脚本在一起的，所以使用原来的逻辑
+    CLASH_TEMPLATE_FILE = os.path.join(app_dir, 'clash_template.yaml')
 else:
-    # 在 Docker 或本地开发环境中，保持原有逻辑
+    # 在 Docker 或本地开发环境中，保持原有逻辑，一切工作正常
     current_script_dir = os.path.dirname(os.path.abspath(__file__))
     DATA_FILE = os.path.join(current_script_dir, 'data.json')
     CLASH_TEMPLATE_FILE = os.path.join(current_script_dir, 'clash_template.yaml')
-# --- [修正结束] ---
+# --- [最终决定版逻辑结束] ---
 
 
 # --- 启动时打印关键诊断信息 ---
@@ -63,7 +71,7 @@ logging.info("=" * 50)
 
 
 # =================================================================================
-# 节点解析 (Parsers) - (无改动，保持原样)
+# 节点解析 (Parsers) - (无改动)
 # =================================================================================
 
 def parse_link(link: str):
@@ -132,7 +140,7 @@ def _parse_trojan(link: str):
 
 
 # =================================================================================
-# Clash配置生成 (Generator) - (无改动，保持原样)
+# Clash配置生成 (Generator) - (无改动)
 # =================================================================================
 
 def generate_clash_config(proxies: list, template_content: str) -> str:
@@ -202,7 +210,7 @@ def generate_clash_config(proxies: list, template_content: str) -> str:
 
 
 # =================================================================================
-# 辅助函数 - (无改动，保持原样)
+# 辅助函数 - (无改动)
 # =================================================================================
 
 def load_data():
@@ -255,7 +263,7 @@ def apply_filter(nodes, keywords_str, filter_type):
 
 
 # =================================================================================
-# 主路由和聚合逻辑 - (无改动，保持原样)
+# 主路由和聚合逻辑 - (无改动)
 # =================================================================================
 
 @app.route('/')
@@ -380,7 +388,7 @@ def aggregate_clash():
 
 
 # =================================================================================
-# API 路由 - (无改动，保持原样)
+# API 路由 - (无改动)
 # =================================================================================
 
 @app.route('/api/data', methods=['GET'])
@@ -456,7 +464,7 @@ def save_global_filter():
     return jsonify({"message": "全局设置已保存"})
 
 
-# --- 日志查看路由 - (无改动，保持原样) ---
+# --- 日志查看路由 - (无改动) ---
 @app.route('/debuglog')
 def debug_log():
     clear_button = '''
@@ -479,7 +487,7 @@ def clear_debug_log():
 # --- 日志路由结束 ---
 
 
-# --- 启动逻辑 - (无改动，保持原样) ---
+# --- 启动逻辑 - (无改动) ---
 def start_server():
     """此函数由安卓的 Chaquopy 调用，用于在后台线程中启动服务器。"""
     try:
