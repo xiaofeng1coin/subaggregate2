@@ -271,22 +271,34 @@ def index():
     user_agent = request.headers.get('User-Agent', '').lower()
     mobile_keywords = ['mobi', 'android', 'iphone', 'ipod', 'ipad', 'windows phone', 'blackberry']
     template_name = 'mobile.html' if any(keyword in user_agent for keyword in mobile_keywords) else 'index.html'
+    
     logging.info(f"检测到 {'移动端' if 'mobile' in template_name else '桌面端'} 设备，渲染 {template_name}")
+    
     try:
         original_html = render_template(template_name)
     except Exception as e:
         logging.error(f"模板文件 '{template_name}' 渲染失败: {e}", exc_info=True)
         return f"<h1>Error</h1><p>Template file '{template_name}' could not be rendered. Check logs.</p>", 500
-    debug_link_html = '''
-    <div style="position: fixed; bottom: 10px; right: 10px; padding: 8px 12px; background-color: yellow; color: black; border: 1px solid black; border-radius: 5px; z-index: 9999; font-family: sans-serif; font-size: 14px;">
-        <a href="/debuglog" target="_blank" style="color: black; text-decoration: none;">查看调试日志</a>
-    </div>
-    </body>
-    '''
-    if '</body>' in original_html:
-        return original_html.replace('</body>', debug_link_html + '</html>', 1)
-    else:
-        return original_html + debug_link_html
+ 
+    # --- [最终修改] 直接返回原始HTML，从而“跳过”下面添加调试按钮的逻辑 ---
+    return original_html
+ 
+    # --- [已注释的调试代码] ---
+    # 如果将来需要再次开启调试按钮，请：
+    # 1. 注释掉上面这行 `return original_html`
+    # 2. 取消下面所有代码的注释 (删除每行前面的 '#')
+    #
+    # debug_link_html = '''
+    # <div style="position: fixed; bottom: 10px; right: 10px; padding: 8px 12px; background-color: yellow; color: black; border: 1px solid black; border-radius: 5px; z-index: 9999; font-family: sans-serif; font-size: 14px;">
+    #     <a href="/debuglog" target="_blank" style="color: black; text-decoration: none;">查看调试日志</a>
+    # </div>
+    # </body>
+    # '''
+    # if '</body>' in original_html:
+    #     return original_html.replace('</body>', debug_link_html + '</html>', 1)
+    # else:
+    #     return original_html + debug_link_html
+    # --- [注释结束] ---
 
 
 @app.route('/aggregate/clash.yaml')
