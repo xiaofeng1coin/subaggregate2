@@ -1,10 +1,5 @@
 # =================================================================
-# ==            全新智能条件发布版 (Final Intelligent)           ==
-# =================================================================
-# 1. 只有 'fix:' 或 'fix：' 开头的 commit 会触发版本提升和 GitHub Release。
-# 2. 其他所有 commit (feat, chore 等) 会构建调试包并上传到 Artifacts。
-# 3. 完全采纳您成功的 gradle.properties 创建经验。
-# 4. 优化了步骤和命名，逻辑更清晰。
+# ==            最终智能条件发布版 (带诊断功能)                ==
 # =================================================================
 
 name: Conditional Build, Versioning, and Release
@@ -16,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # 必须，用于推送版本更新和创建 Release
+  contents: write
   pull-requests: read
 
 jobs:
@@ -31,6 +26,7 @@ jobs:
       - name: 1. Checkout Code
         uses: actions/checkout@v4
         with:
+          # 获取全部历史和所有标签，这对于版本工具至关重要
           fetch-depth: 0 
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -50,58 +46,93 @@ jobs:
       - name: 5. [RELEASE ONLY] Check Commit Message for 'fix'
         id: check_commit
         run: |
-          # [关键修改] 同时检查英文冒号 'fix:' 和中文冒号 'fix：'
           COMMIT_MSG="${{ github.event.head_commit.message }}"
           if [[ "$COMMIT_MSG" == "fix:"* || "$COMMIT_MSG" == "fix："* ]]; then
             echo "IS_FIX_COMMIT=true" >> $GITHUB_OUTPUT
-            echo "Commit is a fix. Proceeding with release process."
+            echo "✅ Commit is a fix. Proceeding with release process."
           else
             echo "IS_FIX_COMMIT=false" >> $GITHUB_OUTPUT
-            echo "Commit is NOT a fix. Proceeding with debug build."
+            echo "ℹ️ Commit is NOT a fix. Proceeding with debug build."
           fi
 
-      - name: 6. [RELEASE ONLY] Bump Version & Changelog with Commitizen
+      # =========================================================================
+      # ==                 [！！！新增的调试步骤！！！]                  ==
+      # =========================================================================
+      - name: 6. [DEBUG] Show Git and Commitizen Status BEFORE Bump
+        # 只在尝试进行Release时运行此诊断
+        if: steps.check_commit.outputs.IS_FIX_COMMIT == 'true'
+        run: |
+          echo "==================== GIT STATUS ===================="
+          echo "Current Branch: $(git rev-parse --abbrev-ref HEAD)"
+          echo "-------------------- Git Tags --------------------"
+          git tag -l | cat
+          echo "----------------- Recent Git Log -----------------"
+          # 显示最近10条提交，帮助我们看到触发工作流的 commit
+          git log --graph --oneline -n 10
+          echo "============= COMMITIZEN CHECK ============="
+          echo "Checking if the LATEST commit is bumpable..."
+          # 使用 `cz check` 明确地检查从倒数第二个commit到最新的commit之间的范围
+          # `|| true` 确保即使检查失败，工作流也不会在这里停止
+          cz check --rev-range $(git log -n 2 --pretty=format:"%H" | tail -n 1)..HEAD || true
+          echo "=============================================="
+
+      - name: 7. [RELEASE ONLY] Bump Version & Get Changelog
         if: steps.check_commit.outputs.IS_FIX_COMMIT == 'true'
         id: cz_bump
         run: |
-          cz bump --yes
+          echo "Attempting to bump version..."
+          # [关键修改] 使用 --changelog 参数，并捕获错误
+          # cz bump 会自动更新 CHANGELOG.md, 这是由 pyproject.toml 中的配置决定的
+          if ! cz bump --yes --changelog; then
+            echo "::error::'cz bump' failed. This likely means no bumpable commits were found between the last tag and HEAD. Please check the logs from the previous debug step."
+            exit 1
+          fi
+
+          # `cz bump` 成功后，版本号已经更新，我们可以直接获取
           new_version=$(cz version --project)
-          changelog=$(cz changelog --start-rev v`cz version --project -prv` v$new_version)
-          
+          echo "✅ Version bumped successfully to: ${new_version}"
+
+          # [关键修改] 提取本次更新的Changelog内容以用于Release
+          # 我们从CHANGELOG.md中提取最新版本的内容
+          # 这个awk命令会打印从新版本号那一行开始，到下一个版本号之前的所有内容
+          changelog_body=$(awk -v ver="## v${new_version}" '/^## v/{if(p)exit; if($0 ~ ver)p=1} p' CHANGELOG.md)
+
           echo "version=${new_version}" >> $GITHUB_OUTPUT
           # 使用多行字符串语法来安全地处理changelog
           echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          echo "${changelog}" >> $GITHUB_OUTPUT
+          echo "${changelog_body}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-          
-          echo "New Version: $new_version"
 
-      - name: 7. [RELEASE ONLY] Update Version Code in Gradle
+      - name: 8. [RELEASE ONLY] Update Version Code in Gradle
         if: steps.cz_bump.outputs.version
         run: |
           VERSION="${{ steps.cz_bump.outputs.version }}"
-          # 生成一个基于版本号的、唯一的整数 version code
           VERSION_CODE=$(echo "$VERSION" | awk -F. '{print $1*10000 + $2*100 + $3}')
           GRADLE_FILE="android_app/app/build.gradle.kts"
           sed -i "s/versionCode = .*/versionCode = $VERSION_CODE/" $GRADLE_FILE
           echo "Updated versionCode in $GRADLE_FILE to $VERSION_CODE"
 
-      - name: 8. [RELEASE ONLY] Commit and Push Version Changes
+      - name: 9. [RELEASE ONLY] Commit and Push Version Changes
         if: steps.cz_bump.outputs.version
         run: |
-          # 检查是否有文件变动 (build.gradle.kts, CHANGELOG.md)
           if [[ -n $(git status -s) ]]; then
             git add .
-            git commit -m "chore(release): bump version to v${{ steps.cz_bump.outputs.version }} [skip ci]"
-            git push
+            # [关键修改] 创建一个专门的 tag，cz bump 会自动创建，我们这里只做 commit 和 push
+            NEW_VERSION="${{ steps.cz_bump.outputs.version }}"
+            git commit -m "chore(release): bump version to v${NEW_VERSION} and update changelog" -m "[skip ci]"
+
+            # 'cz bump' 默认已经创建了 tag。我们只需要推送 commit 和 tags。
+            git push origin master --follow-tags
           else
             echo "No version changes to commit."
           fi
           
-      - name: 9. Prepare Build Environment & Source Files
+      # [后续步骤保持不变]
+      - name: 10. Prepare Build Environment & Source Files
         id: prepare_build
+        # [关键修改] 判断条件改为使用 cz_bump 的输出来决定是 Release 还是 Debug
         run: |
-          if [[ "${{ steps.check_commit.outputs.IS_FIX_COMMIT }}" == "true" ]]; then
+          if [[ -n "${{ steps.cz_bump.outputs.version }}" ]]; then
             echo "BUILD_TYPE=Release" >> $GITHUB_OUTPUT
             echo "Build Type: Release"
           else
@@ -109,35 +140,32 @@ jobs:
             echo "Build Type: Debug"
           fi
           
-          # [关键修改] 清理并明确Python源码复制逻辑
           ANDROID_PYTHON_TARGET_DIR="android_app/app/src/main/python"
           mkdir -p $ANDROID_PYTHON_TARGET_DIR
-          echo "Copying Python source files from project root to $ANDROID_PYTHON_TARGET_DIR"
-          # 复制所有您项目需要的py文件和资源文件
-          cp app.py clash_template.yaml data.json requirements.txt $ANDROID_PYTHON_TARGET_DIR/
+          echo "Copying Python source files..."
+          cp app.py clash_template.yaml data.json requirements.txt $ANDROID_PYTHON_TARGET_DIR/ || echo "Some root python files not found, continuing..."
+          cp -r src_py/. $ANDROID_PYTHON_TARGET_DIR/ || echo "src_py directory not found, continuing..."
           echo "Python source copy complete."
           ls -l $ANDROID_PYTHON_TARGET_DIR
 
-      - name: 10. Set up JDK 17
+      - name: 11. Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 11. Force Create gradle.properties (Your Proven Method)
+      - name: 12. Force Create gradle.properties
         run: |
           PROPERTIES_FILE="android_app/gradle.properties"
-          echo ">>> Forcibly creating $PROPERTIES_FILE to ensure build stability"
           echo "android.useAndroidX=true" > $PROPERTIES_FILE
           echo "android.enableJetifier=true" >> $PROPERTIES_FILE
-          echo ">>> Verification: Contents of $PROPERTIES_FILE:"
           cat $PROPERTIES_FILE
 
-      - name: 12. Grant Execute Permission for Gradle Wrapper
+      - name: 13. Grant Execute Permission for Gradle Wrapper
         working-directory: ./android_app
         run: chmod +x gradlew
 
-      - name: 13. Build Android APK
+      - name: 14. Build Android APK
         id: build_apk
         working-directory: ./android_app
         run: |
@@ -146,17 +174,16 @@ jobs:
           ./gradlew assemble${BUILD_TYPE} --stacktrace
           
           APK_FOLDER_NAME=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
-          apk_path=$(find ./app/build/outputs/apk/${APK_FOLDER_NAME} -name "*.apk" -print -quit) # 使用-print -quit更安全
+          apk_path=$(find ./app/build/outputs/apk/${APK_FOLDER_NAME} -name "*.apk" -print -quit)
           
           if [[ -z "$apk_path" ]]; then
-            echo "::error::APK not found in ./app/build/outputs/apk/${APK_FOLDER_NAME}/ after build!"
+            echo "::error::APK not found after build!"
             exit 1
           fi
           
           echo "APK_PATH=$apk_path" >> "$GITHUB_OUTPUT"
-          echo "APK_NAME=$(basename "$apk_path")" >> "$GITHUB_OUTPUT"
           
-      - name: 14. [RELEASE ONLY] Create GitHub Release
+      - name: 15. [RELEASE ONLY] Create GitHub Release
         if: steps.cz_bump.outputs.version && steps.build_apk.conclusion == 'success'
         uses: softprops/action-gh-release@v2
         with:
@@ -166,9 +193,11 @@ jobs:
           files: android_app/${{ steps.build_apk.outputs.APK_PATH }}
           make_latest: true
       
-      - name: 15. [DEBUG ONLY] Upload Debug APK to Artifacts
-        if: steps.check_commit.outputs.IS_FIX_COMMIT == 'false' && steps.build_apk.conclusion == 'success'
+      - name: 16. [DEBUG ONLY] Upload Debug APK to Artifacts
+        # [关键修改] 判断条件改为使用 cz_bump 的输出来决定
+        if: steps.cz_bump.outputs.version == '' && steps.build_apk.conclusion == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: debug-build-apk
           path: android_app/${{ steps.build_apk.outputs.APK_PATH }}
+
