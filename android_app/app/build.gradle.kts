@@ -16,9 +16,9 @@ android {
         targetSdk = 34
         
         // [关键修改] versionCode 必须是整数，每次发布都要增加。
-        versionCode = 10001
+        versionCode = 10002
         // [关键修改] versionName 是显示给用户的，我们把它更新为三段式。
-        versionName = "1.0.1" 
+        versionName = "1.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
