@@ -1,5 +1,5 @@
 # =================================================================
-# ==          最终融合版 - 保持文件结构，动态创建配置              ==
+# ==          最终融合版 - 使用持久化签名密钥                     ==
 # =================================================================
 
 name: Build and Release
@@ -100,24 +100,20 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-
-      # [!!! 关键恢复步骤 !!!]
-      # 无论如何，在构建前强制在正确的项目根目录(android_app/)创建 gradle.properties 文件
-      - name: 9. Force create gradle.properties to fix AndroidX issue
-        run: |
-          PROPERTIES_FILE="android_app/gradle.properties"
-          echo ">>> Forcibly creating gradle.properties at '$PROPERTIES_FILE'"
-          {
-            echo "android.useAndroidX=true"
-            echo "android.enableJetifier=true"
-            echo "org.gradle.jvmargs=-Xmx2048m"
-          } > $PROPERTIES_FILE
-          echo ">>> Verification: Contents of $PROPERTIES_FILE:"
-          cat $PROPERTIES_FILE
       
-      - name: 10. 授予 Gradle Wrapper 执行权限
+      - name: 9. 授予 Gradle Wrapper 执行权限
         working-directory: ./android_app
         run: chmod +x gradlew
+
+      # [关键修改开始] 新增步骤：解码签名密钥文件
+      - name: 10. Decode and Restore Keystore
+        # 只在构建 Release 包时才需要密钥
+        if: steps.prepare_build.outputs.BUILD_TYPE == 'Release'
+        run: |
+          echo "Restoring keystore from GitHub Secrets..."
+          KEYSTORE_FILE_PATH="android_app/app/my-release-key.keystore"
+          echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > $KEYSTORE_FILE_PATH
+          echo "Keystore restored to $KEYSTORE_FILE_PATH"
 
       - name: 11. 构建 Android APK
         id: build_apk
@@ -129,6 +125,14 @@ jobs:
           apk_path=$(find ./app/build/outputs/apk/${APK_FOLDER_NAME} -name "*.apk" -print -quit)
           if [[ -z "$apk_path" ]]; then echo "::error::APK not found!"; exit 1; fi
           echo "APK_PATH=$apk_path" >> "$GITHUB_OUTPUT"
+        # [关键修改开始] 将secrets作为环境变量传递给Gradle
+        env:
+          # 告诉Gradle密钥文件的位置
+          RELEASE_KEYSTORE: "my-release-key.keystore"
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        # [关键修改结束]
           
       - name: 12. [仅发布] 创建 GitHub Release
         if: steps.bump_version.outputs.new_version

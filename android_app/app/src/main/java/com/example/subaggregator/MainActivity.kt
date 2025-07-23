@@ -2,25 +2,33 @@
 
 package com.example.subaggregator
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.app.DownloadManager
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.Settings
 import android.view.Menu
 import android.view.MenuItem
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import com.chaquo.python.PyException
-import com.chaquo.python.Python
-import com.chaquo.python.android.AndroidPlatform
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.example.subaggregator.databinding.ActivityMainBinding
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.concurrent.thread
@@ -28,27 +36,73 @@ import kotlin.concurrent.thread
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    // [新增] 你的GitHub仓库API地址
     private val GITHUB_API_URL = "https://api.github.com/repos/xiaofeng1coin/subaggregate2/releases/latest"
+    // [关键修改开始] 新增一个变量来存储下载任务ID
+    private var downloadID: Long = -1L
+    // [关键修改结束]
+
+    private val requestPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
+            if (isGranted) {
+                startFlaskService()
+            } else {
+                Toast.makeText(this, "需要通知权限以确保服务在后台稳定运行。", Toast.LENGTH_LONG).show()
+                binding.textViewStatus.text = "服务未运行（需要通知权限）"
+            }
+        }
+
+    // [关键修改开始] 注册一个新的启动器来处理“安装未知应用”权限的返回结果
+    private val requestInstallPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (packageManager.canRequestPackageInstalls()) {
+                    // 用户授权后，再次尝试安装
+                    installApkFromStoredID()
+                } else {
+                    showToastOnUI("未授予安装权限，无法完成更新。")
+                }
+            }
+        }
+    // [关键修改结束]
+
+    // [关键修改开始] 定义一个广播接收器来监听下载完成事件
+    private val onDownloadComplete: BroadcastReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
+            // 确保是我们发起的下载任务
+            if (downloadID == id) {
+                val query = DownloadManager.Query().setFilterById(id)
+                val downloadManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+                val cursor = downloadManager.query(query)
+                if (cursor.moveToFirst()) {
+                    val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                    if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                         // 下载成功，弹出安装确认对话框
+                        showInstallConfirmDialog()
+                    } else {
+                        showToastOnUI("下载失败，请重试。")
+                    }
+                }
+                cursor.close()
+            }
+        }
+    }
+    // [关键修改结束]
+
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-
-        // [修改] 设置我们自己的 Toolbar 作为 App 的 ActionBar
         setSupportActionBar(binding.toolbar)
 
-        // 1. 初始化 Python (保持不变)
-        if (!Python.isStarted()) {
-            Python.start(AndroidPlatform(this))
-        }
+        // [关键修改开始] 注册广播接收器
+        registerReceiver(onDownloadComplete, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), RECEIVER_EXPORTED)
+        // [关键修改结束]
 
-        // 2. 启动 Flask (保持不变)
-        startFlaskServer()
+        askForNotificationPermissionAndStartService()
 
-        // 3. 配置 WebView (保持不变)
         binding.webView.webViewClient = WebViewClient()
         binding.webView.settings.javaScriptEnabled = true
         binding.webView.postDelayed({
@@ -56,42 +110,54 @@ class MainActivity : AppCompatActivity() {
         }, 1500)
     }
 
-    // [新增] 重写此方法来加载我们的菜单布局 (main_menu.xml)
+    // [关键修改开始] 在Activity销毁时，取消注册接收器，避免内存泄漏
+    override fun onDestroy() {
+        super.onDestroy()
+        unregisterReceiver(onDownloadComplete)
+    }
+    // [关键修改结束]
+
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main_menu, menu)
         return true
     }
 
-    // [新增] 重写此方法来处理菜单项的点击事件
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
             R.id.action_check_update -> {
-                // 当用户点击“检查更新”按钮时，执行此处的代码
                 Toast.makeText(this, "正在检查更新...", Toast.LENGTH_SHORT).show()
                 checkForUpdate()
-                true // 返回true，表示事件已被我们成功处理
+                true
             }
             else -> super.onOptionsItemSelected(item)
         }
     }
 
-    // startFlaskServer 函数保持不变
-    private fun startFlaskServer() {
-        binding.textViewStatus.text = "服务器运行在 http://127.0.0.1:5000"
-        thread(start = true) {
-            try {
-                val py = Python.getInstance()
-                val appModule = py.getModule("app")
-                appModule.callAttr("start_server")
-            } catch (e: PyException) {
-                runOnUiThread {
-                    binding.textViewStatus.text = "启动服务器失败:\n${e.message}"
-                }
+    private fun askForNotificationPermissionAndStartService() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                startFlaskService()
+            } else {
+                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
+        } else {
+            startFlaskService()
         }
     }
 
-    // [新增] 检查更新的完整逻辑
+    private fun startFlaskService() {
+        binding.textViewStatus.text = "服务运行在 http://127.0.0.1:5000"
+        val serviceIntent = Intent(this, FlaskService::class.java).apply {
+            action = FlaskService.ACTION_START
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+    }
+
     private fun checkForUpdate() {
         thread(start = true) {
             try {
@@ -133,7 +199,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // [新增] 显示更新对话框
     private fun showUpdateDialog(version: String, notes: String, url: String) {
         runOnUiThread {
             AlertDialog.Builder(this)
@@ -147,9 +212,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // [新增] 使用系统下载器下载APK
     private fun downloadApk(url: String, fileName: String) {
         try {
+            // [关键修改] 清理旧的APK文件，防止冲突
+            val destination = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName)
+            if (destination.exists()) {
+                destination.delete()
+            }
+
             val request = DownloadManager.Request(Uri.parse(url))
                 .setTitle("正在下载 SubAggregator 更新")
                 .setDescription(fileName)
@@ -158,14 +228,82 @@ class MainActivity : AppCompatActivity() {
                 .setAllowedOverMetered(true)
                 .setAllowedOverRoaming(true)
             val downloadManager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            downloadManager.enqueue(request)
+            downloadID = downloadManager.enqueue(request) // 保存下载ID
             showToastOnUI("开始下载...请在通知栏查看进度。")
         } catch (e: Exception){
             showToastOnUI("下载启动失败: ${e.message}")
         }
     }
 
-    // [新增] 版本号比较逻辑
+    // [关键修改开始] 新增函数：显示安装确认对话框
+    private fun showInstallConfirmDialog() {
+        runOnUiThread {
+            AlertDialog.Builder(this)
+                .setTitle("下载完成")
+                .setMessage("新版本已下载完毕，是否立即安装？")
+                .setPositiveButton("是") { _, _ ->
+                    checkInstallPermissionAndInstall()
+                }
+                .setNegativeButton("否", null)
+                .setCancelable(false)
+                .show()
+        }
+    }
+    // [关键修改结束]
+
+    // [关键修改开始] 新增函数：检查并请求安装权限
+    private fun checkInstallPermissionAndInstall() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (!packageManager.canRequestPackageInstalls()) {
+                AlertDialog.Builder(this)
+                    .setTitle("需要授权")
+                    .setMessage("为了更新应用，请授予“安装未知应用”的权限。")
+                    .setPositiveButton("去授权") { _, _ ->
+                        val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                            data = Uri.parse("package:$packageName")
+                        }
+                        requestInstallPermissionLauncher.launch(intent)
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+                return
+            }
+        }
+        installApkFromStoredID()
+    }
+    // [关键修改结束]
+
+    // [关键修改开始] 新增函数：根据已保存的下载ID来安装APK
+    private fun installApkFromStoredID() {
+        val downloadManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+        val uri: Uri? = downloadManager.getUriForDownloadedFile(downloadID)
+
+        if (uri == null) {
+            showToastOnUI("无法找到下载的文件，请重试。")
+            return
+        }
+        
+        val apkUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS) ,"SubAggregator_v${packageManager.getPackageInfo(packageName,0).versionName}.apk")
+                FileProvider.getUriForFile(this, "${BuildConfig.APPLICATION_ID}.provider", File(uri.path!!))
+            } else {
+                uri
+            }
+
+        val installIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+        }
+
+        try {
+             startActivity(installIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            showToastOnUI("无法启动安装程序: ${e.localizedMessage}")
+        }
+    }
+    // [关键修改结束]
+
     private fun isNewerVersion(newVersion: String, oldVersion: String): Boolean {
        val newParts = newVersion.split('.').map { it.toIntOrNull() ?: 0 }
        val oldParts = oldVersion.split('.').map { it.toIntOrNull() ?: 0 }
@@ -179,7 +317,6 @@ class MainActivity : AppCompatActivity() {
        return false
     }
 
-    // [新增] 在UI线程显示Toast
     private fun showToastOnUI(message: String) {
         runOnUiThread {
             Toast.makeText(this, message, Toast.LENGTH_LONG).show()

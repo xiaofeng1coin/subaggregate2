@@ -10,14 +10,28 @@ android {
     namespace = "com.example.subaggregator"
     compileSdk = 34
 
+    // [关键修改开始] 替换为从环境变量读取密钥的正式签名配置
+    signingConfigs {
+        create("release") {
+            // 只在CI环境（有环境变量时）才配置这些值
+            // 这可以防止在没有设置环境变量的本地机器上构建时出错
+            val keystoreFile = System.getenv("RELEASE_KEYSTORE")
+            if (keystoreFile != null && File(keystoreFile).exists()) {
+                storeFile = file(keystoreFile)
+                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
+    // [关键修改结束]
+
     defaultConfig {
         applicationId = "com.example.subaggregator"
         minSdk = 24
         targetSdk = 34
         
-        // [关键修改] versionCode 必须是整数，每次发布都要增加。
         versionCode = 10002
-        // [关键修改] versionName 是显示给用户的，我们把它更新为三段式。
         versionName = "1.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -34,6 +48,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // [关键修改开始] 告诉 release 构建类型使用我们新的 "release" 签名配置
+            signingConfig = signingConfigs.getByName("release")
+            // [关键修改结束]
         }
     }
     compileOptions {
