@@ -1,8 +1,20 @@
 # =================================================================
-# ==          解决方案 - 仅修复版本计算，保留你的判断逻辑         ==
+# ==          最终版 - 仅修复版本计算，保留原有逻辑             ==
 # =================================================================
 
-# ... (文件前面部分不变) ...
+name: Build and Release
+
+# =======================> [修正] 补回缺失的触发器 <=======================
+on:
+  push:
+    branches:
+      - "master"
+  workflow_dispatch:
+# =======================> 修正结束 <==================================
+
+permissions:
+  contents: write
+  pull-requests: read
 
 jobs:
   build-and-release:
@@ -24,9 +36,6 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-      # =======================> 以下是核心修改区域 <=======================
-
-      # 步骤 3: 检查 'fix' 提交 (保留你的原始逻辑)
       - name: 3. 检查是否为 'fix' 提交
         id: check_commit
         run: |
@@ -39,63 +48,47 @@ jobs:
             echo "ℹ️ Not a 'fix' commit. Starting debug build."
           fi
 
-      # 步骤 4: 计算新版本号 (这是你需要替换的唯一部分)
-      # 移除了 github-tag-action, 改用优化的 bash 脚本
       - name: 4. [仅发布] 计算新版本号并生成日志
         if: steps.check_commit.outputs.IS_FIX_COMMIT == 'true'
-        id: bump_version # 这是整个流程中唯一的 bump_version ID
+        id: bump_version
         run: |
-          # 获取最新的 tag，例如 'v1.0.3'
           LAST_TAG=$(git describe --tags --abbrev=0)
           echo "Found last tag: ${LAST_TAG}"
           
-          # 从 tag 中提取版本号，移除 'v'，例如 '1.0.3'
           LAST_VERSION=$(echo $LAST_TAG | sed 's/^v//')
           
-          # 将版本号分割成主版本.次版本和补丁版本
           MAJOR=$(echo $LAST_VERSION | cut -d. -f1)
           MINOR=$(echo $LAST_VERSION | cut -d. -f2)
           PATCH=$(echo $LAST_VERSION | cut -d. -f3)
           
-          # 将补丁版本号加 1
           NEW_PATCH=$((PATCH + 1))
           
-          # 组合成新的版本号
           NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
           echo "✅ Calculated new version: ${NEW_VERSION}"
           
-          # 生成简单的 changelog
           CHANGELOG_BODY="* ${{ github.event.head_commit.message }}"
 
-          # 输出新版本号和 changelog，供后续步骤使用
           echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
           echo "new_tag=v${NEW_VERSION}" >> $GITHUB_OUTPUT
           echo "changelog_body<<EOF" >> $GITHUB_OUTPUT
           echo "${CHANGELOG_BODY}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
           
-      # =======================> 核心修改区域结束 <=======================
-
-      # 步骤 5: 更新 Gradle 版本文件
       - name: 5. [仅发布] 更新 Gradle 版本文件
         if: steps.bump_version.outputs.new_version
         run: |
           NEW_VERSION="${{ steps.bump_version.outputs.new_version }}"
           echo "Updating build.gradle.kts to version $NEW_VERSION"
-          # 更新 versionName
           sed -i "s/versionName = .*/versionName = \"$NEW_VERSION\"/" android_app/app/build.gradle.kts
-          # 计算并更新 versionCode
           VERSION_CODE=$(echo "$NEW_VERSION" | awk -F. '{print $1*10000 + $2*100 + $3}')
           sed -i "s/versionCode = .*/versionCode = $VERSION_CODE/" android_app/app/build.gradle.kts
 
-      # 步骤 6: 提交版本更改并创建 Tag
-      - name: 6. [仅发布] 提交版本更改并创建 Tag
+      - name: 6. [仅发布] 提交版本更改
         if: steps.bump_version.outputs.new_version
         run: |
           NEW_VERSION="${{ steps.bump_version.outputs.new_version }}"
           git add android_app/app/build.gradle.kts
           git commit -m "chore(release): bump version to v${NEW_VERSION}" -m "[skip ci]"
-          # 注意：这里的 push 没有创建 tag, 因为 softprops/action-gh-release 会帮我们做
           git push origin master
 
       - name: 7. 准备构建环境
@@ -111,7 +104,6 @@ jobs:
           cp app.py clash_template.yaml data.json requirements.txt $ANDROID_PYTHON_TARGET_DIR/ || true
           cp -r src_py/. $ANDROID_PYTHON_TARGET_DIR/ || true
 
-      # ... (后续步骤 8, 9, 10, 11 不变) ...
       - name: 8. Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -146,7 +138,6 @@ jobs:
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
 
-      # 步骤 12: 创建 Release (现在它会使用我们自己脚本的输出)
       - name: 12. [仅发布] 创建 GitHub Release
         if: steps.bump_version.outputs.new_version
         uses: softprops/action-gh-release@v2
@@ -157,11 +148,9 @@ jobs:
           files: android_app/${{ steps.build_apk.outputs.APK_PATH }}
           make_latest: true
       
-      # 步骤 13: 上传 Debug 包 (逻辑不变)
       - name: 13. [仅调试] 上传 Debug APK
         if: steps.check_commit.outputs.IS_FIX_COMMIT == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: debug-build-apk
           path: android_app/${{ steps.build_apk.outputs.APK_PATH }}
-
