@@ -1,4 +1,4 @@
-# 文件名: app.py (已添加内置日志查看面板，完整版)
+# 文件名: app.py (最终修正版 - 2024-07-23)
 
 import os
 import json
@@ -7,67 +7,61 @@ import base64
 import yaml
 import binascii
 import time
-import io  # <-- [新增] 用于在内存中捕获日志
+import io
 from urllib.parse import urlparse, parse_qs, unquote
 from flask import Flask, request, jsonify, make_response, render_template
-from markupsafe import escape  # <-- [新增] 用于安全地显示日志到网页
+from markupsafe import escape
 import requests
 
 # --- 基础设置 ---
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
-# --- [修改处 1: 替换日志系统以捕获所有日志] ---
-# 创建一个在内存中读写的 "文件"
+# --- 日志系统设置 (保持原样) ---
 log_capture_string = io.StringIO()
-# 获取Python日志记录器的根节点
 root_logger = logging.getLogger()
-# 设置日志记录的最低级别为INFO (这是所有日志都会被记录的保证)
 root_logger.setLevel(logging.INFO)
-
-# 创建一个处理器，它会将日志写入到我们内存中的 "文件"
 log_handler = logging.StreamHandler(log_capture_string)
-# 定义日志的格式
 formatter = logging.Formatter('%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 log_handler.setFormatter(formatter)
-# 将这个新的处理器添加到日志记录器中
 root_logger.addHandler(log_handler)
-
-# 同时，为了兼容Docker等环境，我们仍然保留向控制台输出日志的功能
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
 root_logger.addHandler(console_handler)
-# --- [修改处 1 结束] ---
 
 
-# --- [必要修改 1: 环境判断与路径动态设置] ---
-# 通过检查 Chaquopy 特有的环境变量，判断是否在安卓环境中运行
-IN_ANDROID = 'CHAQUOPY_PYTHON' in os.environ
+# --- [最终修正: 采用最可靠的方式判断环境] ---
+try:
+    # 尝试导入一个只有 Chaquopy 才存在的模块。
+    # 如果成功，说明在安卓环境；如果失败（ImportError），则不在。
+    from com.chaquo.python.android import AndroidPlatform
+    IN_ANDROID = True
+except ImportError:
+    IN_ANDROID = False
 
 if IN_ANDROID:
-    # 在安卓环境中，我们需要从 com.chaquo.python.android 包获取应用私有目录
-    from com.chaquo.python.android import AndroidPlatform
-    # getFilesDir() 返回一个 Java File 对象, 我们需要转换为 Python 字符串路径
-    # 这个路径是 App 的私有读写目录，如 /data/data/你的包名/files
+    # 在安卓环境中，我们从已成功导入的 com.chaquo.python.android 包获取应用私有目录
+    # getFilesDir() 返回的是App专属的、可持久化的私有目录 (例如: /data/data/com.example.subaggregator/files)
+    # 在这个目录中读写文件，可以保证 App 重启后数据不丢失。
     data_dir = str(AndroidPlatform.getFilesDir())
     DATA_FILE = os.path.join(data_dir, 'data.json')
-    # 对于和脚本一起打包的只读资源文件（如模板），它们位于 Python 源码目录中
-    # 使用 __file__ 获取当前脚本所在目录是可靠的方式
+    # 对于只读的模板文件，仍然从脚本所在位置读取
     current_script_dir = os.path.dirname(os.path.abspath(__file__))
     CLASH_TEMPLATE_FILE = os.path.join(current_script_dir, 'clash_template.yaml')
 else:
-    # 在 Docker 或本地开发环境中，同样建议使用绝对路径以避免工作目录问题
+    # 在 Docker 或本地开发环境中，保持原有逻辑，确保完全兼容
     current_script_dir = os.path.dirname(os.path.abspath(__file__))
     DATA_FILE = os.path.join(current_script_dir, 'data.json')
     CLASH_TEMPLATE_FILE = os.path.join(current_script_dir, 'clash_template.yaml')
+# --- [最终修正结束] ---
 
 
-# --- [新增处 2: 启动时打印关键诊断信息] ---
+# --- 启动时打印关键诊断信息 ---
 logging.info("=" * 50)
 logging.info(f"DIAGNOSTIC: Environment detected: {'Android' if IN_ANDROID else 'Docker/Local'}")
 logging.info(f"DIAGNOSTIC: DATA_FILE path is set to -----> {DATA_FILE}")
 logging.info(f"DIAGNOSTIC: CLASH_TEMPLATE_FILE path is set to -----> {CLASH_TEMPLATE_FILE}")
 logging.info("=" * 50)
-# --- [新增处 2 结束] ---
+# --- 诊断信息结束 ---
 
 
 # =================================================================================
@@ -225,7 +219,6 @@ def generate_clash_config(proxies: list, template_content: str) -> str:
 # =================================================================================
 
 def load_data():
-    # --- [修改处 3: 为load_data增加详细诊断日志] ---
     logging.info(f"DIAGNOSTIC: Attempting to LOAD data from {DATA_FILE}")
     if not os.path.exists(DATA_FILE):
         logging.warning(f"DIAGNOSTIC: File not found at {DATA_FILE}. Returning empty default data.")
@@ -240,24 +233,20 @@ def load_data():
         logging.error(f"DIAGNOSTIC: !!! FAILED to LOAD or PARSE data from {DATA_FILE}: {e}", exc_info=True)
         return {"subscriptions": [], "aggregation_enabled": [], "global_filter_enabled": False,
                 "global_filter_keywords": ""}
-    # --- [修改处 3 结束] ---
 
 
 def save_data(data):
-    # --- [修改处 4: 为save_data增加详细诊断日志] ---
     logging.info(f"DIAGNOSTIC: Attempting to SAVE data to {DATA_FILE}")
     try:
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
         logging.info(f"DIAGNOSTIC: Successfully SAVED data. File should now exist at {DATA_FILE}")
-        # 立即验证文件是否真的存在
         if os.path.exists(DATA_FILE):
             logging.info(f"DIAGNOSTIC: VERIFIED - File exists after save.")
         else:
             logging.error(f"DIAGNOSTIC: !!! CRITICAL FAILURE - File DOES NOT exist after supposedly successful save!")
     except Exception as e:
         logging.error(f"DIAGNOSTIC: !!! FAILED to SAVE data to {DATA_FILE}: {e}", exc_info=True)
-    # --- [修改处 4 结束] ---
 
 
 
@@ -267,13 +256,9 @@ def apply_filter(nodes, keywords_str, filter_type):
 
     keywords = []
     if filter_type == "全局":
-        # 全局过滤: 仅按空格分割
         keywords = [kw for kw in keywords_str.split(' ') if kw]
     else:
-        # 订阅独立过滤: 兼容换行、逗号、空格作为分隔符
-        # 1. 将所有可能的分隔符统一替换为逗号
         standardized_str = keywords_str.replace('\n', ',').replace(' ', ',')
-        # 2. 按逗号分割，并移除因多个分隔符连续出现而产生的空字符串
         keywords = [kw.strip() for kw in standardized_str.split(',') if kw.strip()]
 
     if not keywords:
@@ -281,10 +266,7 @@ def apply_filter(nodes, keywords_str, filter_type):
 
     logging.info(f"    - 执行 {filter_type} 过滤, 关键词 (大小写敏感): {', '.join(keywords)}")
     original_count = len(nodes)
-
-    # 大小写敏感匹配
     filtered_nodes = [node for node in nodes if not any(kw in node.get('name', '') for kw in keywords)]
-
     logging.info(f"      过滤效果: {original_count} -> {len(filtered_nodes)}")
     return filtered_nodes
 
@@ -293,37 +275,27 @@ def apply_filter(nodes, keywords_str, filter_type):
 # 主路由和聚合逻辑
 # =================================================================================
 
-# ---------- [修改处 5: 注入悬浮调试链接到主页] ----------
 @app.route('/')
 def index():
     user_agent = request.headers.get('User-Agent', '').lower()
     mobile_keywords = ['mobi', 'android', 'iphone', 'ipod', 'ipad', 'windows phone', 'blackberry']
-
-    # 判断应该渲染哪个模板
     template_name = 'mobile.html' if any(keyword in user_agent for keyword in mobile_keywords) else 'index.html'
     logging.info(f"检测到 {'移动端' if 'mobile' in template_name else '桌面端'} 设备，渲染 {template_name}")
-    
-    # 先渲染原始的HTML内容
     try:
         original_html = render_template(template_name)
     except Exception as e:
         logging.error(f"模板文件 '{template_name}' 渲染失败: {e}", exc_info=True)
         return f"<h1>Error</h1><p>Template file '{template_name}' could not be rendered. Check logs.</p>", 500
-
-    # 创建并注入一个悬浮的调试链接
-    # 这个链接会一直显示在页面的右下角
     debug_link_html = '''
     <div style="position: fixed; bottom: 10px; right: 10px; padding: 8px 12px; background-color: yellow; color: black; border: 1px solid black; border-radius: 5px; z-index: 9999; font-family: sans-serif; font-size: 14px;">
         <a href="/debuglog" target="_blank" style="color: black; text-decoration: none;">查看调试日志</a>
     </div>
     </body>
     '''
-    # 将链接附加到原始HTML的</body>标签之前，更稳妥
     if '</body>' in original_html:
         return original_html.replace('</body>', debug_link_html + '</html>', 1)
     else:
         return original_html + debug_link_html
-# ---------- [修改处 5 结束] ----------
 
 
 @app.route('/aggregate/clash.yaml')
@@ -387,12 +359,12 @@ def aggregate_clash():
                         if node:
                             nodes_from_sub.append(node)
                 logging.info(f"    - 从链接列表成功解析出 {len(nodes_from_sub)} 个节点。")
-
+            
             logging.info(f"    - 为 {len(nodes_from_sub)} 个节点添加前缀 '[{sub_name}]'")
             for node in nodes_from_sub:
                 if 'name' in node and not node['name'].startswith(f"[{sub_name}] "):
                     node['name'] = f"[{sub_name}] " + node['name']
-
+            
             if sub_filter_enabled and sub_filter_keywords:
                 nodes_after_sub_filter = apply_filter(nodes_from_sub, sub_filter_keywords, f"订阅内[{sub_name}]")
                 all_nodes.extend(nodes_after_sub_filter)
@@ -406,7 +378,7 @@ def aggregate_clash():
         except Exception as e:
             logging.error(f"  - [错误] 处理订阅 '{sub_name}' 时发生未知错误: {e}", exc_info=False)
             continue
-
+    
     logging.info(f"- 所有订阅处理完毕，合并后共 {len(all_nodes)} 个节点。")
     final_nodes = all_nodes
 
@@ -422,7 +394,7 @@ def aggregate_clash():
     if not final_nodes:
         logging.warning("  - 所有节点均被过滤或获取失败，无法生成有效配置。")
         return make_response("所有节点均被过滤或获取失败，无法生成有效配置。", 400)
-
+    
     try:
         template_path = CLASH_TEMPLATE_FILE
         if os.path.exists(template_path):
@@ -432,7 +404,7 @@ def aggregate_clash():
         else:
             logging.error(f"  - [严重错误] 未找到 '{template_path}'，无法生成配置。")
             return make_response(f"错误：模板文件 '{template_path}' 未找到。", 500)
-
+        
         final_config_str = generate_clash_config(final_nodes, template_content)
 
         response = make_response(final_config_str)
@@ -526,10 +498,9 @@ def save_global_filter():
     return jsonify({"message": "全局设置已保存"})
 
 
-# --- [新增处 6: 新增日志查看路由] ---
+# --- 日志查看路由 (保持原样) ---
 @app.route('/debuglog')
 def debug_log():
-    # 清空并刷新按钮
     clear_button = '''
     <div style="position: fixed; top: 10px; right: 10px;">
         <form method="POST" action="/debuglog/clear">
@@ -538,24 +509,19 @@ def debug_log():
         <button onclick="location.reload()">刷新</button>
     </div>
     '''
-    # 获取内存中捕获的所有日志内容
     log_contents = log_capture_string.getvalue()
-    # 将日志内容以纯文本形式返回，并用<pre>标签包裹以保持格式
-    # 使用 escape() 来防止日志中的特殊字符被浏览器误解为HTML标签
     return f"<html><body>{clear_button}<pre>{escape(log_contents)}</pre></body></html>"
 
 @app.route('/debuglog/clear', methods=['POST'])
 def clear_debug_log():
-    # 清空内存中的日志缓存
     log_capture_string.truncate(0)
     log_capture_string.seek(0)
     logging.info("DIAGNOSTIC: Log has been manually cleared.")
-    # 重定向回日志页面
     return '<script>window.location.href="/debuglog";</script>'
-# --- [新增处 6 结束] ---
+# --- 日志路由结束 ---
 
 
-# --- [必要修改 2: 启动逻辑分离，以兼容不同环境] ---
+# --- 启动逻辑 (保持原样) ---
 
 def start_server():
     """此函数由安卓的 Chaquopy 调用，用于在后台线程中启动服务器。"""
@@ -563,19 +529,15 @@ def start_server():
         logging.error(f"致命错误: 模板文件 '{CLASH_TEMPLATE_FILE}' 未找到, 服务器无法启动。")
         return
     logging.info("=" * 20 + " Chaquopy Sub Aggregator 服务器启动 " + "=" * 20)
-    # 在安卓后台服务中，必须使用 threaded=True 来处理并发请求，否则UI会卡死
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
 
-# --- 主程序入口 ---
 if __name__ == '__main__':
-    # 在非安卓环境（如Docker）中，直接运行
     if not IN_ANDROID:
         if not os.path.exists(CLASH_TEMPLATE_FILE):
             logging.error(f"致命错误: 模板文件 '{CLASH_TEMPLATE_FILE}' 未找到, 应用无法启动。")
             exit(1)
         logging.info("=" * 20 + " Sub Aggregator 应用启动 (Docker/Local) " + "=" * 20)
         app.run(host='0.0.0.0', port=5000, debug=False)
-    # 在安卓环境中，此脚本由原生代码导入并调用 start_server()，不应在此处直接运行
     else:
         logging.info("在安卓环境中被调用，等待原生代码启动服务器...")
 
