@@ -16,17 +16,27 @@ import requests
 # --- 基础设置 ---
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
-# --- 日志系统设置 (无改动) ---
+# --- [关键修改] 日志系统增强：增加内存捕获 ---
+# 创建一个在内存中写入的 StringIO 对象，用于捕获日志
 log_capture_string = io.StringIO()
+
+# 获取根日志记录器
 root_logger = logging.getLogger()
-root_logger.setLevel(logging.INFO)
-log_handler = logging.StreamHandler(log_capture_string)
+root_logger.setLevel(logging.INFO) # 设置日志级别
+
+# 创建一个通用的格式化器
 formatter = logging.Formatter('%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+
+# 1. 创建一个日志处理器，将日志写入内存中的 log_capture_string
+log_handler = logging.StreamHandler(log_capture_string)
 log_handler.setFormatter(formatter)
 root_logger.addHandler(log_handler)
+
+# 2. 创建另一个处理器，将日志打印到标准输出（控制台/Logcat），保持原有行为
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
 root_logger.addHandler(console_handler)
+# --- [修改结束] ---
 
 
 # --- 文件路径定位 (无改动) ---
@@ -181,7 +191,7 @@ def generate_clash_config(proxies: list, template_content: str) -> str:
         for group in config_dict['proxy-groups']:
             if isinstance(group, dict) and 'name' in group:
                 group_name = group.get('name', '')
-                if group_name in ['🚀 手动切换', '♻️ 自动选择', '🔯 故障转移', '🔮 负载均衡']:
+                if group_name in ['🚀 节点选择', '🚀 手动切换', '♻️ 自动选择', '🔯 故障转移', '🔮 负载均衡']:
                     group['proxies'] = all_proxy_names
                     logging.info(f"    - 已填充通用组 '{group_name}'，共 {len(all_proxy_names)} 个节点。")
                 elif group_name in region_nodes:
@@ -236,7 +246,7 @@ def apply_filter(nodes, keywords_str, filter_type):
     keywords = []
     if filter_type == "全局":
         keywords = [kw for kw in keywords_str.split(' ') if kw]
-    else:
+    else: # 订阅内过滤器支持逗号、换行和空格
         standardized_str = keywords_str.replace('\n', ',').replace(' ', ',')
         keywords = [kw.strip() for kw in standardized_str.split(',') if kw.strip()]
     if not keywords:
@@ -272,8 +282,8 @@ def index():
     #   正式发布时, 请确保下面所有行都被注释掉 (保持当前状态)。
     #
     # debug_link_html = '''
-    # <div style="position: fixed; bottom: 10px; right: 10px; padding: 8px 12px; background-color: yellow; color: black; border: 1px solid black; border-radius: 5px; z-index: 9999; font-family: sans-serif; font-size: 14px;">
-    #     <a href="/debuglog" target="_blank" style="color: black; text-decoration: none;">查看调试日志</a>
+    # <div style="position: fixed; bottom: 10px; right: 10px; padding: 8px 12px; background-color: #ffc107; color: black; border: 1px solid black; border-radius: 5px; z-index: 9999; font-family: sans-serif; font-size: 14px; box-shadow: 2px 2px 8px rgba(0,0,0,0.3);">
+    #     <a href="/debuglog" target="_blank" style="color: black; text-decoration: none; font-weight: bold;">查看调试日志</a>
     # </div>
     # </body>
     # '''
@@ -340,7 +350,7 @@ def aggregate_clash():
                 logging.info(f"    - 从链接列表成功解析出 {len(nodes_from_sub)} 个节点。")
             logging.info(f"    - 为 {len(nodes_from_sub)} 个节点添加前缀 '[{sub_name}]'")
             for node in nodes_from_sub:
-                if 'name' in node and not node['name'].startswith(f"[{sub_name}] "):
+                if 'name' in node and isinstance(node.get('name'), str) and not node['name'].startswith(f"[{sub_name}] "):
                     node['name'] = f"[{sub_name}] " + node['name']
             if sub_filter_enabled and sub_filter_keywords:
                 nodes_after_sub_filter = apply_filter(nodes_from_sub, sub_filter_keywords, f"订阅内[{sub_name}]")
@@ -423,8 +433,8 @@ def update_subscription(sub_id):
     if sub_to_update:
         sub_to_update.update(req_data)
         save_data(data)
-        is_filter_update_only = (
-                                        'filter_keywords' in req_data or 'filter_enabled' in req_data) and 'name' not in req_data and 'url' not in req_data
+        is_filter_update_only = (('filter_keywords' in req_data or 'filter_enabled' in req_data) and 
+                                'name' not in req_data and 'url' not in req_data)
         if is_filter_update_only:
             return jsonify({"message": "过滤器保存成功"})
         else:
@@ -432,34 +442,28 @@ def update_subscription(sub_id):
     return jsonify({"message": "未找到该订阅"}), 404
 
 
-# --- [修改开始] 为删除操作添加极其详细的日志 ---
+# --- [关键修改] 为删除操作添加极其详细的日志 ---
 @app.route('/api/subscriptions/<sub_id>', methods=['DELETE'])
 def delete_subscription(sub_id):
     logging.info("="*20 + " [DELETE REQUEST START] " + "="*20)
-    logging.info(f"  - Received DELETE request for subscription ID: '{sub_id}'")
+    logging.info(f"  - Received DELETE request for subscription ID: '{sub_id}' (Type: {type(sub_id)})")
     
     data = load_data()
     
     original_sub_list = data.get('subscriptions', [])
     original_len = len(original_sub_list)
     logging.info(f"  - [Before] Number of subscriptions: {original_len}")
-    
-    # 查找要删除的订阅
-    sub_to_delete = next((sub for sub in original_sub_list if sub.get('id') == sub_id), None)
-    
-    if sub_to_delete:
-        logging.info(f"  - Match found! Details: Name='{sub_to_delete.get('name')}', URL='{sub_to_delete.get('url')}'")
-    else:
-        logging.warning(f"  - No match found for ID '{sub_id}' in the current data.")
+    if original_len > 0:
+        logging.info(f"  - [Before] First subscription's ID: '{original_sub_list[0].get('id')}' (Type: {type(original_sub_list[0].get('id'))})")
 
-    # 执行删除操作
-    data['subscriptions'] = [sub for sub in original_sub_list if sub['id'] != sub_id]
+    # 执行删除操作（注意：sub['id'] 和 sub_id 都是字符串，直接比较）
+    data['subscriptions'] = [sub for sub in original_sub_list if sub.get('id') != sub_id]
     
     new_len = len(data['subscriptions'])
     logging.info(f"  - [After] Number of subscriptions: {new_len}")
 
     if new_len < original_len:
-        logging.info("  - Subscription list changed. Deletion is considered successful.")
+        logging.info("  - OK: Subscription list length changed. Deletion is considered successful.")
         logging.info("  - Now, cleaning the 'aggregation_enabled' list...")
         
         original_agg_list = data.get('aggregation_enabled', [])
@@ -476,7 +480,7 @@ def delete_subscription(sub_id):
         logging.info("="*20 + " [DELETE REQUEST SUCCESS] " + "="*20)
         return jsonify({"message": "订阅删除成功"})
     
-    logging.error(f"  - CRITICAL: Length of subscription list did not change. Deletion failed because ID '{sub_id}' was not found.")
+    logging.error(f"  - CRITICAL: Length of subscription list did not change. Deletion failed because ID '{sub_id}' was NOT FOUND.")
     logging.info("="*20 + " [DELETE REQUEST FAILED] " + "="*20)
     return jsonify({"message": "未找到该订阅"}), 404
 # --- [修改结束] ---
@@ -504,19 +508,65 @@ def save_global_filter():
 # --- [新增开始] 日志查看路由 ---
 @app.route('/debuglog')
 def debug_log():
-    # 增加一些方便的按钮
-    clear_button = '''
-    <div style="position: fixed; top: 10px; right: 10px;">
-        <form method="POST" action="/debuglog/clear">
-            <button type="submit" style="padding: 8px 12px; cursor: pointer;">清空日志</button>
-        </form>
-        <button onclick="location.reload()" style="padding: 8px 12px; cursor: pointer; margin-top: 5px;">刷新</button>
-    </div>
+    # 增加一些方便的按钮和样式
+    html_head = '''
+    <head>
+        <title>App Debug Log</title>
+        <style>
+            body { background: #1a1a1a; color: #dcdcdc; font-family: Consolas, Monaco, monospace; line-height: 1.6; padding: 2em; }
+            .controls { position: fixed; top: 15px; right: 15px; background: #333; padding: 10px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.5); }
+            .controls button { background: #555; color: white; border: none; padding: 8px 12px; margin-left: 10px; cursor: pointer; border-radius: 3px; }
+            .controls button:hover { background: #666; }
+            pre { white-space: pre-wrap; word-wrap: break-word; }
+            .INFO { color: #dcdcdc; }
+            .WARNING { color: #f0e68c; }
+            .ERROR { color: #ff6b6b; font-weight: bold; }
+            .CRITICAL { color: #ff4757; font-weight: bold; background: #570000; display: block; }
+            .DIAGNOSTIC { color: #87ceeb; }
+        </style>
+    </head>
     '''
+
     # 从内存中获取所有日志内容
     log_contents = log_capture_string.getvalue()
-    # 使用<pre>标签来保留换行和空格，并用escape防止XSS
-    return f"<html><body style='background:#111;color:#eee;font-family:monospace;line-height:1.5;padding:1em;'>{clear_button}<pre>{escape(log_contents)}</pre></body></html>"
+    
+    # 对日志内容进行HTML着色
+    colored_log_lines = []
+    for line in log_contents.splitlines():
+        escaped_line = escape(line)
+        if " | ERROR   |" in line:
+            colored_log_lines.append(f'<span class="ERROR">{escaped_line}</span>')
+        elif " | WARNING |" in line:
+            colored_log_lines.append(f'<span class="WARNING">{escaped_line}</span>')
+        elif " | CRITICAL|" in line:
+            colored_log_lines.append(f'<span class="CRITICAL">{escaped_line}</span>')
+        elif "DIAGNOSTIC:" in line:
+            colored_log_lines.append(f'<span class="DIAGNOSTIC">{escaped_line}</span>')
+        else:
+            colored_log_lines.append(f'<span class="INFO">{escaped_line}</span>')
+    
+    colored_logs = "<br>".join(colored_log_lines)
+    
+    # 组合最终的HTML
+    return f"""
+    <html>
+        {html_head}
+        <body>
+            <div class="controls">
+                <form method="POST" action="/debuglog/clear" style="display:inline;">
+                    <button type="submit">清空日志</button>
+                </form>
+                <button onclick="location.reload()">刷新</button>
+            </div>
+            <h1>应用后端实时日志</h1>
+            <pre>{colored_logs}</pre>
+            <script>
+                // 自动滚动到底部
+                window.scrollTo(0, document.body.scrollHeight);
+            </script>
+        </body>
+    </html>
+    """
 
 @app.route('/debuglog/clear', methods=['POST'])
 def clear_debug_log():
@@ -524,8 +574,8 @@ def clear_debug_log():
     log_capture_string.truncate(0)
     log_capture_string.seek(0)
     logging.info("DIAGNOSTIC: Log has been manually cleared by user.")
-    # 重定向回日志页面
-    return '<script>window.location.href="/debuglog";</script>'
+    # 重定向回日志页面，使用JS防止浏览器缓存
+    return '<script>window.location.replace("/debuglog");</script>'
 # --- [新增结束] ---
 
 
