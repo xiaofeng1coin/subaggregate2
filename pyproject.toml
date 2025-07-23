@@ -1,53 +1,45 @@
-# 这是 commitizen 工具的配置文件
+# =================================================================
+# ==                  最终、最彻底的解决方案                     ==
+# =================================================================
+
 [tool.commitizen]
-# [无改动] 初始版本号
+# [!!! 关键变更 !!!]
+# 我们不再使用默认规则，而是指定使用下面定义的、我们自己的自定义规则集。
+name = "cz_customize"
+
+# [无改动] 基本版本信息
 version = "1.0.1"
-
-# [无改动] 使用语义化版本
 version_scheme = "semver"
-
-# [无改动] 版本号所在的其他文件路径
-version_files = [
-    "android_app/app/build.gradle.kts"
-]
-
-# [无改动] 查找和替换版本号的正则表达式
-version_pattern = 'versionName = "(?P<version>.*)"'
-
-# [无改动] 开启自动更新 CHANGELOG.md
 update_changelog_on_bump = true
 changelog_file = "CHANGELOG.md"
 
-# [无改动] 规定了不同 commit 类型如何影响版本号
-[tool.commitizen.change_type_map]
-fix = "PATCH"
-feat = "MINOR"
-perf = "PATCH"
-refactor = "PATCH"
-build = "null"
-chore = "null"
-ci = "null"
-docs = "null"
-style = "null"
-test = "null"
+# [无改动] 版本号所在的文件及匹配规则
+version_files = [
+    "android_app/app/build.gradle.kts"
+]
+version_pattern = 'versionName = "(?P<version>.*)"'
 
 
-# ==============================================================
-# ==                 [！！！关键新增部分！！！]                  ==
-# ==============================================================
-
-# 自定义 commitizen 的行为，以解决 commit message 格式验证过于严格的问题
+# [!!! 关键变更 !!!]
+# 我们将所有的自定义规则都整合到这个部分，创建一套完全独立的规则集。
 [tool.commitizen.customize]
 # 这是 commitizen 用来解析 commit message 的正则表达式。
-# 我们对官方版本做了微小修改，使其更加宽松：
-# 1. `(：|:)`：同时接受英文冒号 `:` 和中文冒号 `：`。
-# 2. `\s?`：冒号后面的空格变为可选（可以有，也可以没有）。
-message_parser = "cz_conventional_commits.parser.ConventionalCommitsParser"
-change_parser = "cz_conventional_commits.parser.ConventionalCommitsParser"
+# 它同时接受中英文冒号，并且冒号后的空格是可选的。
+# 这一个 parser 将被 'bump' 和 'check' 命令同时使用。
 commit_parser = "(?P<change_type>fix|feat|build|chore|ci|docs|perf|refactor|revert|style|test)(?:\\((?P<scope>[^()\\r\\n]*)\\))?(?P<breaking>!)?(?P<is_breaking>BREAKING CHANGE)?(：|:)\\s?(?P<subject>.*(?:\\s(?:.*))?)"
+change_parser = "(?P<change_type>fix|feat|build|chore|ci|docs|perf|refactor|revert|style|test)(?:\\((?P<scope>[^()\\r\\n]*)\\))?(?P<breaking>!)?(?P<is_breaking>BREAKING CHANGE)?(：|:)\\s?(?P<subject>.*(?:\\s(?:.*))?)"
 
-# 同时，我们确保 `cz check` 命令也使用这个新的、宽松的规则
-[tool.commitizen.check_patterns]
-# 这个正则表达式需要匹配我们上面定义的 commit_parser 规则
-"(?s)(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\\(\\S+\\))?!?(：|:)\\s?(.+)" = "subject"
+# [关键变更] 将 'change_type_map' 移到这里，作为自定义规则集的一部分
+change_type_map = { fix = "PATCH", feat = "MINOR", perf = "PATCH", refactor = "PATCH", build = "NONE", chore = "NONE", ci = "NONE", docs = "NONE", style = "NONE", test = "NONE" }
+
+# 下面的部分是为了让 'cz commit' 命令（如果在本地使用）也能正常工作
+message_builder = "_{change_type}{scope}: {subject}"
+questions = [
+    { type = "list", name = "change_type", message = "Select the type of change you are committing", choices = ["fix", "feat", "chore", "docs", "style", "refactor", "perf", "test", "build", "ci"] },
+    { type = "input", name = "scope", message = "What is the scope of this change (e.g., component or file name)? (press enter to skip)\n" },
+    { type = "input", name = "subject", message = "Write a short, imperative tense description of the change:\n" },
+    { type = "input", name = "body", message = "Provide a longer description of the change: (press enter to skip)\n" },
+    { type = "confirm", name = "is_breaking_change", message = "Are there any breaking changes?", default = false },
+    { type = "input", name = "footer", message = "Footer. Information about Breaking Changes and reference issues that this commit closes: (press enter to skip)\n" }
+]
 
