@@ -136,9 +136,9 @@ def _parse_trojan(link: str):
 
 
 # =================================================================================
-# Clash配置生成 (Generator) - (无改动)
+# Clash配置生成 (Generator) - [关键修改区域]
 # =================================================================================
-
+ 
 def generate_clash_config(proxies: list, template_content: str) -> str:
     logging.info("--- [开始生成Clash配置] ---")
     try:
@@ -148,12 +148,16 @@ def generate_clash_config(proxies: list, template_content: str) -> str:
     except yaml.YAMLError as e:
         logging.error(f"  [错误] 解析YAML模板时出错: {e}")
         return "# 模板解析失败，请检查 clash_template.yaml 文件格式。"
+ 
+    # 步骤1 & 2 (无改动)
     junk_keywords = ['流量', '到期', '重置', '过滤', '剩余', '套餐']
     filtered_proxies = [p for p in proxies if not any(kw in p.get('name', '').lower() for kw in junk_keywords)]
     logging.info(f"  - [步骤1] 过滤流量信息等无效条目，有效节点数: {len(proxies)} -> {len(filtered_proxies)}")
     config_dict['proxies'] = filtered_proxies
     all_proxy_names = [p['name'] for p in filtered_proxies]
     logging.info("  - [步骤2] 将所有有效节点注入到模板 'proxies' 键。")
+ 
+    # 步骤3 (无改动)
     logging.info("  - [步骤3] 开始智能地区分组...")
     region_map = {
         '🇭🇰 香港节点': ['香港', 'Hong Kong', 'HK', 'HKT'], '🇨🇳 台湾节点': ['台湾', 'Taiwan', 'TW', 'TPE'],
@@ -182,25 +186,40 @@ def generate_clash_config(proxies: list, template_content: str) -> str:
         if nodes: logging.info(f"      - {region}: {len(nodes)} 个节点")
     if other_nodes:
         logging.warning(f"    - 注意: {len(other_nodes)} 个节点被分入 '🌍 其他地区'。")
-        for i, node_name in enumerate(other_nodes[:10]):
-            logging.info(f"      - 其他地区节点示例: {node_name}")
-        if len(other_nodes) > 10:
-            logging.info(f"      - ... (还有 {len(other_nodes) - 10} 个未显示)")
-    logging.info("  - [步骤4] 填充模板中的代理组...")
+ 
+    # --- [关键修改] 步骤4: 修正代理组填充逻辑 ---
+    logging.info("  - [步骤4] 精准填充模板中的代理组...")
     if 'proxy-groups' in config_dict and isinstance(config_dict['proxy-groups'], list):
+        # 定义哪些组需要填充所有节点。注意：'🚀 节点选择' 已被移除！
+        groups_that_need_all_nodes = ['🚀 手动切换', '♻️ 自动选择', '🔯 故障转移', '🔮 负载均衡']
+        
         for group in config_dict['proxy-groups']:
             if isinstance(group, dict) and 'name' in group:
                 group_name = group.get('name', '')
-                if group_name in ['🚀 节点选择', '🚀 手动切换', '♻️ 自动选择', '🔯 故障转移', '🔮 负载均衡']:
-                    group['proxies'] = all_proxy_names
-                    logging.info(f"    - 已填充通用组 '{group_name}'，共 {len(all_proxy_names)} 个节点。")
+ 
+                # 逻辑1: 填充需要【所有节点】的组
+                if group_name in groups_that_need_all_nodes:
+                    group['proxies'] = all_proxy_names if all_proxy_names else ['DIRECT']
+                    logging.info(f"    - 策略组 '{group_name}' 已填充全部 {len(all_proxy_names)} 个节点。")
+                
+                # 逻辑2: 填充【地区节点】组
                 elif group_name in region_nodes:
                     nodes_to_fill = region_nodes[group_name]
+                    # 如果地区节点列表为空，放入DIRECT防止Clash报错
                     group['proxies'] = nodes_to_fill if nodes_to_fill else ['DIRECT']
-                    logging.info(f"    - 已填充地区组 '{group_name}'，共 {len(nodes_to_fill)} 个节点。")
+                    logging.info(f"    - 地区组 '{group_name}' 已填充 {len(nodes_to_fill)} 个节点。")
+                
+                # 逻辑3: 填充【其他地区】组
                 elif group_name == '🌍 其他地区':
+                    # 如果其他节点列表为空，放入DIRECT防止Clash报错
                     group['proxies'] = other_nodes if other_nodes else ['DIRECT']
-                    logging.info(f"    - 已填充组 '{group_name}'，共 {len(other_nodes)} 个节点。")
+                    logging.info(f"    - '其他地区'组 已填充 {len(other_nodes)} 个节点。")
+ 
+                # 逻辑4: 其他所有组（如 '🚀 节点选择'）保持模板原样，不进行任何操作
+                else:
+                    logging.info(f"    - 结构性组 '{group_name}' 保持模板预设，不进行填充。")
+    # --- [修改结束] ---
+    
     logging.info("--- [Clash配置生成完毕] ---")
     return yaml.dump(config_dict, allow_unicode=True, sort_keys=False)
 
