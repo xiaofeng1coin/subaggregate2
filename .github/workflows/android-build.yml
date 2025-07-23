@@ -1,5 +1,5 @@
 # =================================================================
-# ==           最终版本 - 彻底抛弃 Commitizen，100% 可靠          ==
+# ==          最终融合版 - 保持文件结构，动态创建配置              ==
 # =================================================================
 
 name: Build and Release
@@ -34,45 +34,30 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-      - name: 3. 检查是否为 'fix' 提交 (核心判断)
+      - name: 3. 检查是否为 'fix' 提交
         id: check_commit
         run: |
           COMMIT_MSG="${{ github.event.head_commit.message }}"
-          # 您的核心要求：只要是 fix 开头，不关心冒号
           if [[ "$COMMIT_MSG" == "fix"* ]]; then
             echo "IS_FIX_COMMIT=true" >> $GITHUB_OUTPUT
-            echo "✅ Commit is a 'fix'. Proceeding with release process."
+            echo "✅ 'fix' commit detected. Starting release process."
           else
             echo "IS_FIX_COMMIT=false" >> $GITHUB_OUTPUT
-            echo "ℹ️ Not a 'fix' commit. Proceeding with debug build."
+            echo "ℹ️ Not a 'fix' commit. Starting debug build."
           fi
 
-      - name: 4. [仅发布] 计算新版本号并生成发布日志
+      - name: 4. [仅发布] 计算新版本号并生成日志
         if: steps.check_commit.outputs.IS_FIX_COMMIT == 'true'
         id: bump_version
         run: |
-          # 获取最新的 tag，例如 v1.0.1
           LAST_TAG=$(git describe --tags --abbrev=0)
-          echo "Last tag is: $LAST_TAG"
-          
-          # 去掉 'v' 前缀，例如 1.0.1
           LAST_VERSION=$(echo $LAST_TAG | sed 's/^v//')
-          
-          # 将版本号分割为 major, minor, patch
           MAJOR_MINOR=$(echo $LAST_VERSION | cut -d. -f1,2)
           PATCH=$(echo $LAST_VERSION | cut -d. -f3)
-          
-          # Patch 位 +1
           NEW_PATCH=$((PATCH + 1))
-          
-          # 组合成新版本号
           NEW_VERSION="${MAJOR_MINOR}.${NEW_PATCH}"
           echo "✅ New version will be: v${NEW_VERSION}"
-          
-          # 生成简单的发布日志 (只包含最新的 commit)
           CHANGELOG_BODY="* ${{ github.event.head_commit.message }}"
-
-          # 将新版本号和日志设为输出，供后续步骤使用
           echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
           echo "changelog_body<<EOF" >> $GITHUB_OUTPUT
           echo "${CHANGELOG_BODY}" >> $GITHUB_OUTPUT
@@ -82,16 +67,11 @@ jobs:
         if: steps.bump_version.outputs.new_version
         run: |
           NEW_VERSION="${{ steps.bump_version.outputs.new_version }}"
-          # 更新 versionName
           sed -i "s/versionName = .*/versionName = \"$NEW_VERSION\"/" android_app/app/build.gradle.kts
-          echo "Updated versionName to $NEW_VERSION"
-          
-          # 更新 versionCode
           VERSION_CODE=$(echo "$NEW_VERSION" | awk -F. '{print $1*10000 + $2*100 + $3}')
           sed -i "s/versionCode = .*/versionCode = $VERSION_CODE/" android_app/app/build.gradle.kts
-          echo "Updated versionCode to $VERSION_CODE"
           
-      - name: 6. [仅发布] 提交版本更改并创建新 Tag
+      - name: 6. [仅发布] 提交版本更改并创建 Tag
         if: steps.bump_version.outputs.new_version
         run: |
           NEW_VERSION="${{ steps.bump_version.outputs.new_version }}"
@@ -100,40 +80,46 @@ jobs:
             git commit -m "chore(release): bump version to v${NEW_VERSION}" -m "[skip ci]"
             git tag "v${NEW_VERSION}"
             git push origin master --follow-tags
-          else
-            echo "No version changes to commit."
           fi
 
       - name: 7. 准备构建环境
         id: prepare_build
         run: |
-          # 根据上一步是否成功来判断构建类型
           if [[ -n "${{ steps.bump_version.outputs.new_version }}" ]]; then
             echo "BUILD_TYPE=Release" >> $GITHUB_OUTPUT
-            echo "Build Type: Release"
           else
             echo "BUILD_TYPE=Debug" >> $GITHUB_OUTPUT
-            echo "Build Type: Debug"
           fi
-          
-          # (后续文件复制部分保持不变)
           ANDROID_PYTHON_TARGET_DIR="android_app/app/src/main/python"
           mkdir -p $ANDROID_PYTHON_TARGET_DIR
           cp app.py clash_template.yaml data.json requirements.txt $ANDROID_PYTHON_TARGET_DIR/ || true
           cp -r src_py/. $ANDROID_PYTHON_TARGET_DIR/ || true
 
-      # --- 后续的构建和上传步骤保持不变 ---
       - name: 8. Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 9. Grant Execute Permission for Gradle Wrapper
+      # [!!! 关键恢复步骤 !!!]
+      # 无论如何，在构建前强制在正确的项目根目录(android_app/)创建 gradle.properties 文件
+      - name: 9. Force create gradle.properties to fix AndroidX issue
+        run: |
+          PROPERTIES_FILE="android_app/gradle.properties"
+          echo ">>> Forcibly creating gradle.properties at '$PROPERTIES_FILE'"
+          {
+            echo "android.useAndroidX=true"
+            echo "android.enableJetifier=true"
+            echo "org.gradle.jvmargs=-Xmx2048m"
+          } > $PROPERTIES_FILE
+          echo ">>> Verification: Contents of $PROPERTIES_FILE:"
+          cat $PROPERTIES_FILE
+      
+      - name: 10. 授予 Gradle Wrapper 执行权限
         working-directory: ./android_app
         run: chmod +x gradlew
 
-      - name: 10. Build Android APK
+      - name: 11. 构建 Android APK
         id: build_apk
         working-directory: ./android_app
         run: |
@@ -141,10 +127,10 @@ jobs:
           ./gradlew assemble${BUILD_TYPE} --stacktrace
           APK_FOLDER_NAME=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
           apk_path=$(find ./app/build/outputs/apk/${APK_FOLDER_NAME} -name "*.apk" -print -quit)
-          if [[ -z "$apk_path" ]]; then exit 1; fi
+          if [[ -z "$apk_path" ]]; then echo "::error::APK not found!"; exit 1; fi
           echo "APK_PATH=$apk_path" >> "$GITHUB_OUTPUT"
           
-      - name: 11. [仅发布] 创建 GitHub Release
+      - name: 12. [仅发布] 创建 GitHub Release
         if: steps.bump_version.outputs.new_version
         uses: softprops/action-gh-release@v2
         with:
@@ -154,10 +140,9 @@ jobs:
           files: android_app/${{ steps.build_apk.outputs.APK_PATH }}
           make_latest: true
       
-      - name: 12. [仅调试] 上传 Debug APK
+      - name: 13. [仅调试] 上传 Debug APK
         if: steps.check_commit.outputs.IS_FIX_COMMIT == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: debug-build-apk
           path: android_app/${{ steps.build_apk.outputs.APK_PATH }}
-
