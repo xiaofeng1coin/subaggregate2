@@ -1,5 +1,5 @@
 # =================================================================
-# ==            YAML 语法已修正 - 最终版                     ==
+# ==            采用更安全的环境变量判断法 - 最终版           ==
 # =================================================================
 name: Build and Release
 
@@ -15,6 +15,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     
+    # 核心修正：在这里预先计算好条件，存入环境变量
+    env:
+      KEYSTORE_IS_PRESENT: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+
     steps:
       - name: 1. Checkout Code
         uses: actions/checkout@v4
@@ -48,10 +52,10 @@ jobs:
         run: chmod +x android_app/gradlew
         
       - name: 7. Decode and Restore Keystore
-        # ===> 这里是修正的地方 <===
-        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+        # 核心修正：现在判断一个简单的环境变量，这绝对不会出错
+        if: env.KEYSTORE_IS_PRESENT == 'true'
         run: |
-          echo "Restoring keystore from GitHub Secrets..."
+          echo "Keystore secret is present. Restoring file..."
           KEYSTORE_FILE_PATH="android_app/app/my-release-key.keystore"
           echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > $KEYSTORE_FILE_PATH
           echo "Keystore restored to $KEYSTORE_FILE_PATH"
@@ -74,14 +78,26 @@ jobs:
           echo "APK_PATH=$apk_path" >> "$GITHUB_OUTPUT"
         
       - name: 9. 自动版本管理和发布
+        # 这个判断是标准的，没有问题
         if: startsWith(github.event.head_commit.message, 'fix')
         env:
+          # 使用 GH_TOKEN 是 gh-cli 的标准做法
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' || echo "v1.0.0")
-          if [ "$LATEST_TAG" == "v1.0.0" ] && [ "$(gh release list)" != "[]" ]; then 
-              LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
+          # 检查gh是否已安装
+          if ! command -v gh &> /dev/null
+          then
+              echo "gh command could not be found, attempting to install..."
+              sudo apt-get update
+              sudo apt-get install gh -y
           fi
+          
+          # 获取最新版本号的逻辑，增加了健壮性
+          LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || echo "v1.0.0")
+          if [[ -z "$LATEST_TAG" ]]; then
+              LATEST_TAG="v1.0.0"
+          fi
+          
           NEW_VERSION=$(echo $LATEST_TAG | awk -F. -v OFS=. '{$NF++;print}')
           echo "New Version: $NEW_VERSION"
 
