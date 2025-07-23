@@ -66,7 +66,7 @@ jobs:
         run: |
           BUILD_TYPE="Release"
           ./gradlew assemble${BUILD_TYPE} \
-            -PRELEASE_KEYSTORE_FILE=app/my-release-key.keystore \
+            -PRELEASE_KEYSTORE_FILE=my-release-key.keystore \
             -PRELEASE_KEYSTORE_PASSWORD=${{ secrets.RELEASE_KEYSTORE_PASSWORD }} \
             -PRELEASE_KEY_ALIAS=${{ secrets.RELEASE_KEY_ALIAS }} \
             -PRELEASE_KEY_PASSWORD=${{ secrets.RELEASE_KEY_PASSWORD }} \
