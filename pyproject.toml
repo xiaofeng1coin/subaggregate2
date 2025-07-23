@@ -1,10 +1,9 @@
 # =================================================================
-# ==                  最终、最彻底的解决方案                     ==
+# ==                  最终混合式解决方案                         ==
 # =================================================================
 
 [tool.commitizen]
-# [!!! 关键变更 !!!]
-# 我们不再使用默认规则，而是指定使用下面定义的、我们自己的自定义规则集。
+# [关键] 告诉 commitizen，解析 commit message 时使用我们下面的自定义规则
 name = "cz_customize"
 
 # [无改动] 基本版本信息
@@ -19,20 +18,30 @@ version_files = [
 ]
 version_pattern = 'versionName = "(?P<version>.*)"'
 
+# [!!! 关键恢复 !!!]
+# 我们将这个部分放回顶层，专门给 'cz bump' 命令看。
+# 它定义了 'fix' 会将版本号的 PATCH 位 +1。
+[tool.commitizen.change_type_map]
+fix = "PATCH"
+feat = "MINOR"
+perf = "PATCH"
+refactor = "PATCH"
+build = "NONE"
+chore = "NONE"
+ci = "NONE"
+docs = "NONE"
+style = "NONE"
+test = "NONE"
 
-# [!!! 关键变更 !!!]
-# 我们将所有的自定义规则都整合到这个部分，创建一套完全独立的规则集。
+
+# [!!! 关键保留 !!!]
+# 我们保留这个部分，专门给 'cz check' 和解析器用。
+# 它定义了如何正确解析包含中文冒号和可选空格的 commit。
 [tool.commitizen.customize]
-# 这是 commitizen 用来解析 commit message 的正则表达式。
-# 它同时接受中英文冒号，并且冒号后的空格是可选的。
-# 这一个 parser 将被 'bump' 和 'check' 命令同时使用。
 commit_parser = "(?P<change_type>fix|feat|build|chore|ci|docs|perf|refactor|revert|style|test)(?:\\((?P<scope>[^()\\r\\n]*)\\))?(?P<breaking>!)?(?P<is_breaking>BREAKING CHANGE)?(：|:)\\s?(?P<subject>.*(?:\\s(?:.*))?)"
 change_parser = "(?P<change_type>fix|feat|build|chore|ci|docs|perf|refactor|revert|style|test)(?:\\((?P<scope>[^()\\r\\n]*)\\))?(?P<breaking>!)?(?P<is_breaking>BREAKING CHANGE)?(：|:)\\s?(?P<subject>.*(?:\\s(?:.*))?)"
 
-# [关键变更] 将 'change_type_map' 移到这里，作为自定义规则集的一部分
-change_type_map = { fix = "PATCH", feat = "MINOR", perf = "PATCH", refactor = "PATCH", build = "NONE", chore = "NONE", ci = "NONE", docs = "NONE", style = "NONE", test = "NONE" }
-
-# 下面的部分是为了让 'cz commit' 命令（如果在本地使用）也能正常工作
+# 下面的部分是为了让 'cz commit' 命令（如果在本地使用）也能正常工作，保留即可
 message_builder = "_{change_type}{scope}: {subject}"
 questions = [
     { type = "list", name = "change_type", message = "Select the type of change you are committing", choices = ["fix", "feat", "chore", "docs", "style", "refactor", "perf", "test", "build", "ci"] },
@@ -42,4 +51,3 @@ questions = [
     { type = "confirm", name = "is_breaking_change", message = "Are there any breaking changes?", default = false },
     { type = "input", name = "footer", message = "Footer. Information about Breaking Changes and reference issues that this commit closes: (press enter to skip)\n" }
 ]
-
