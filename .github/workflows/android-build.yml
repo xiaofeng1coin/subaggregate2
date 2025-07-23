@@ -1,5 +1,5 @@
 # =================================================================
-# ==            最终智能条件发布版 (带诊断功能)                ==
+# ==                  最终完美版 (带诊断功能)                    ==
 # =================================================================
 
 name: Conditional Build, Versioning, and Release
@@ -26,7 +26,6 @@ jobs:
       - name: 1. Checkout Code
         uses: actions/checkout@v4
         with:
-          # 获取全部历史和所有标签，这对于版本工具至关重要
           fetch-depth: 0 
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -55,12 +54,6 @@ jobs:
             echo "ℹ️ Commit is NOT a fix. Proceeding with debug build."
           fi
 
-      # =========================================================================
-      # ==                 [！！！新增的调试步骤！！！]                  ==
-      # =========================================================================
-# =========================================================================
-      # ==                 [！！！已修改的诊断步骤！！！]                  ==
-      # =========================================================================
       - name: 6. [DEBUG] Show Git and Commitizen Status BEFORE Bump
         if: steps.check_commit.outputs.IS_FIX_COMMIT == 'true'
         run: |
@@ -72,8 +65,8 @@ jobs:
           git log --graph --oneline -n 10
           echo "============= COMMITIZEN CHECK ============="
           echo "Checking if the LATEST commit is bumpable..."
-          # [关键修改] 添加 --no-raise 来忽略非致命格式错误
-          cz check --rev-range $(git log -n 2 --pretty=format:"%H" | tail -n 1)..HEAD --no-raise "cz.exceptions.CzException" || true
+          # [关键修改] 已删除无效的 --no-raise 参数
+          cz check --rev-range $(git log -n 2 --pretty=format:"%H" | tail -n 1)..HEAD || true
           echo "=============================================="
  
       - name: 7. [RELEASE ONLY] Bump Version & Get Changelog
@@ -81,9 +74,8 @@ jobs:
         id: cz_bump
         run: |
           echo "Attempting to bump version..."
-          # [关键修改] 使用 --changelog 和 --no-raise 参数来忽略非致命格式错误
-          # 即使 commit message 格式稍有不规范（如缺少空格），它也会尝试 bump
-          if ! cz bump --yes --changelog --no-raise "cz.exceptions.CzException"; then
+          # [关键修改] 已删除无效的 --no-raise 参数
+          if ! cz bump --yes --changelog; then
             echo "::error::'cz bump' failed. This likely means no bumpable commits were found between the last tag and HEAD. Please check the logs from the previous debug step."
             exit 1
           fi
@@ -112,20 +104,15 @@ jobs:
         run: |
           if [[ -n $(git status -s) ]]; then
             git add .
-            # [关键修改] 创建一个专门的 tag，cz bump 会自动创建，我们这里只做 commit 和 push
             NEW_VERSION="${{ steps.cz_bump.outputs.version }}"
             git commit -m "chore(release): bump version to v${NEW_VERSION} and update changelog" -m "[skip ci]"
-
-            # 'cz bump' 默认已经创建了 tag。我们只需要推送 commit 和 tags。
             git push origin master --follow-tags
           else
             echo "No version changes to commit."
           fi
           
-      # [后续步骤保持不变]
       - name: 10. Prepare Build Environment & Source Files
         id: prepare_build
-        # [关键修改] 判断条件改为使用 cz_bump 的输出来决定是 Release 还是 Debug
         run: |
           if [[ -n "${{ steps.cz_bump.outputs.version }}" ]]; then
             echo "BUILD_TYPE=Release" >> $GITHUB_OUTPUT
@@ -189,10 +176,8 @@ jobs:
           make_latest: true
       
       - name: 16. [DEBUG ONLY] Upload Debug APK to Artifacts
-        # [关键修改] 判断条件改为使用 cz_bump 的输出来决定
         if: steps.cz_bump.outputs.version == '' && steps.build_apk.conclusion == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: debug-build-apk
           path: android_app/${{ steps.build_apk.outputs.APK_PATH }}
-
