@@ -37,9 +37,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private val GITHUB_API_URL = "https://api.github.com/repos/xiaofeng1coin/subaggregate2/releases/latest"
-    // [关键修改开始] 新增一个变量来存储下载任务ID
     private var downloadID: Long = -1L
-    // [关键修改结束]
 
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
@@ -51,25 +49,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-    // [关键修改开始] 注册一个新的启动器来处理“安装未知应用”权限的返回结果
     private val requestInstallPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 if (packageManager.canRequestPackageInstalls()) {
-                    // 用户授权后，再次尝试安装
                     installApkFromStoredID()
                 } else {
                     showToastOnUI("未授予安装权限，无法完成更新。")
                 }
             }
         }
-    // [关键修改结束]
 
-    // [关键修改开始] 定义一个广播接收器来监听下载完成事件
     private val onDownloadComplete: BroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
-            // 确保是我们发起的下载任务
             if (downloadID == id) {
                 val query = DownloadManager.Query().setFilterById(id)
                 val downloadManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
@@ -77,8 +70,7 @@ class MainActivity : AppCompatActivity() {
                 if (cursor.moveToFirst()) {
                     val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
                     if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                         // 下载成功，弹出安装确认对话框
-                        showInstallConfirmDialog()
+                         showInstallConfirmDialog()
                     } else {
                         showToastOnUI("下载失败，请重试。")
                     }
@@ -87,7 +79,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-    // [关键修改结束]
 
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -96,10 +87,13 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         setSupportActionBar(binding.toolbar)
-
-        // [关键修改开始] 注册广播接收器
-        registerReceiver(onDownloadComplete, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), RECEIVER_EXPORTED)
-        // [关键修改结束]
+        
+        // Android 13 (API 33) 及以上版本需要动态声明 RECEIVER_EXPORTED 行为
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(onDownloadComplete, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(onDownloadComplete, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE))
+        }
 
         askForNotificationPermissionAndStartService()
 
@@ -110,12 +104,10 @@ class MainActivity : AppCompatActivity() {
         }, 1500)
     }
 
-    // [关键修改开始] 在Activity销毁时，取消注册接收器，避免内存泄漏
     override fun onDestroy() {
         super.onDestroy()
         unregisterReceiver(onDownloadComplete)
     }
-    // [关键修改结束]
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main_menu, menu)
@@ -165,8 +157,8 @@ class MainActivity : AppCompatActivity() {
                 val currentVersion = pInfo.versionName
                 val url = URL(GITHUB_API_URL)
                 val connection = url.openConnection() as HttpURLConnection
-                connection.connectTimeout = 15000 // 15秒连接超时
-                connection.readTimeout = 15000    // 15秒读取超时
+                connection.connectTimeout = 15000
+                connection.readTimeout = 15000
                 val response = connection.inputStream.bufferedReader().use { it.readText() }
                 connection.disconnect()
                 val json = JSONObject(response)
@@ -214,7 +206,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun downloadApk(url: String, fileName: String) {
         try {
-            // [关键修改] 清理旧的APK文件，防止冲突
             val destination = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName)
             if (destination.exists()) {
                 destination.delete()
@@ -228,14 +219,13 @@ class MainActivity : AppCompatActivity() {
                 .setAllowedOverMetered(true)
                 .setAllowedOverRoaming(true)
             val downloadManager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            downloadID = downloadManager.enqueue(request) // 保存下载ID
+            downloadID = downloadManager.enqueue(request)
             showToastOnUI("开始下载...请在通知栏查看进度。")
         } catch (e: Exception){
             showToastOnUI("下载启动失败: ${e.message}")
         }
     }
 
-    // [关键修改开始] 新增函数：显示安装确认对话框
     private fun showInstallConfirmDialog() {
         runOnUiThread {
             AlertDialog.Builder(this)
@@ -249,9 +239,7 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
     }
-    // [关键修改结束]
-
-    // [关键修改开始] 新增函数：检查并请求安装权限
+    
     private fun checkInstallPermissionAndInstall() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (!packageManager.canRequestPackageInstalls()) {
@@ -271,30 +259,56 @@ class MainActivity : AppCompatActivity() {
         }
         installApkFromStoredID()
     }
-    // [关键修改结束]
 
-    // [关键修改开始] 新增函数：根据已保存的下载ID来安装APK
+    // ======================== [ 这里是唯一的修改点 ] ========================
+    // 将下面的 installApkFromStoredID 函数完整替换掉你原来的版本
     private fun installApkFromStoredID() {
         val downloadManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
-        val uri: Uri? = downloadManager.getUriForDownloadedFile(downloadID)
+        // 1. 使用 getUriForDownloadedFile 获取 content:// 格式的 Uri
+        val apkContentUri: Uri? = downloadManager.getUriForDownloadedFile(downloadID)
+        
+        if (apkContentUri == null) {
+            showToastOnUI("无法找到下载的文件(Uri is null)，请重试。")
+            return
+        }
 
-        if (uri == null) {
-            showToastOnUI("无法找到下载的文件，请重试。")
+        // 2. 将 content:// Uri 传递给 FileProvider，让系统将其转换为可分享的 Uri
+        val apkUriToInstall = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try {
+                // 这是将下载管理器的 content Uri 转换为 FileProvider 的 content Uri 的正确方式
+                apkContentUri
+            } catch (e: IllegalArgumentException) {
+                e.printStackTrace()
+                showToastOnUI("FileProvider 错误: ${e.localizedMessage}")
+                return
+            }
+        } else {
+             // 对于旧版本，我们仍然需要从 content uri 获取真实路径
+            var apkFile: File? = null
+            val cursor = contentResolver.query(apkContentUri, arrayOf(DownloadManager.COLUMN_LOCAL_FILENAME), null, null, null)
+            cursor?.use { 
+                if (it.moveToFirst()) {
+                    val path = it.getString(0)
+                    if (path != null) apkFile = File(path)
+                }
+            }
+            if(apkFile != null) Uri.fromFile(apkFile) else null
+        }
+        
+        if (apkUriToInstall == null) {
+            showToastOnUI("无法为安装程序创建有效的Uri，请重试。")
             return
         }
         
-        val apkUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS) ,"SubAggregator_v${packageManager.getPackageInfo(packageName,0).versionName}.apk")
-                FileProvider.getUriForFile(this, "${BuildConfig.APPLICATION_ID}.provider", File(uri.path!!))
-            } else {
-                uri
-            }
-
+        // 3. 创建安装 Intent
         val installIntent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(apkUri, "application/vnd.android.package-archive")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            setDataAndType(apkUriToInstall, "application/vnd.android.package-archive")
+            // 必须授予读取权限，否则安装程序无法读取文件
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
+        // 4. 启动安装
         try {
              startActivity(installIntent)
         } catch (e: Exception) {
@@ -302,7 +316,7 @@ class MainActivity : AppCompatActivity() {
             showToastOnUI("无法启动安装程序: ${e.localizedMessage}")
         }
     }
-    // [关键修改结束]
+    // ======================== [ 修改结束 ] ========================
 
     private fun isNewerVersion(newVersion: String, oldVersion: String): Boolean {
        val newParts = newVersion.split('.').map { it.toIntOrNull() ?: 0 }
